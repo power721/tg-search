@@ -592,6 +592,10 @@ export interface ResourcesGroupedResponse {
   grouped: Record<string, number>
 }
 
+export interface DashboardResourceStatsResponse {
+  grouped: Record<string, number>
+}
+
 export interface LinksGroupedResponse {
   grouped: Record<string, number>
 }

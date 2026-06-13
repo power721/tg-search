@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { apiGet, apiPost } from '@/api/client'
 import type {
+  DashboardResourceStatsResponse,
   LinksGroupedResponse,
   ResourceItem,
   ResourcesGroupedResponse,
@@ -41,6 +42,7 @@ export const useResourcesStore = defineStore('resources', {
     items: [] as ResourceItem[],
     total: 0,
     grouped: {} as Record<string, number>,
+    dashboardGrouped: {} as Record<string, number>,
     linkTypesGrouped: {} as Record<string, number>,
     loading: false,
     error: ''
@@ -61,6 +63,13 @@ export const useResourcesStore = defineStore('resources', {
           buildResourcePath('/api/resources/grouped', filters, false)
         )
         this.grouped = response.grouped
+        return response.grouped
+      })
+    },
+    async loadDashboardGrouped() {
+      return this.withLoading(async () => {
+        const response = await apiGet<DashboardResourceStatsResponse>('/api/dashboard/resource-stats')
+        this.dashboardGrouped = response.grouped
         return response.grouped
       })
     },

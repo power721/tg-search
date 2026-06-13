@@ -44,6 +44,18 @@ describe('useResourcesStore', () => {
     expect(store.linkTypesGrouped.quark).toBe(3)
   })
 
+  it('loads dashboard resource type stats from the dashboard endpoint', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      grouped: { cloud_drive: 2, magnet: 1, ed2k: 0, http: 3, files: 4 }
+    })
+    const store = useResourcesStore()
+
+    await store.loadDashboardGrouped()
+
+    expect(apiGet).toHaveBeenCalledWith('/api/dashboard/resource-stats')
+    expect(store.dashboardGrouped.files).toBe(4)
+  })
+
   it('passes page offsets when loading resources', async () => {
     vi.mocked(apiGet).mockResolvedValue({
       items: [],

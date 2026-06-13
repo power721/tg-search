@@ -18,7 +18,7 @@ onMounted(() => {
     void auth.loadMe()
   }
   void status.load()
-  void resources.loadGrouped()
+  void resources.loadDashboardGrouped()
   void resources.loadLinkTypesGrouped()
   void tasks.loadTasks()
 })
@@ -34,11 +34,11 @@ const cards = computed(() => [
 ])
 
 const resourceTypes = computed(() => [
-  { label: '网盘', value: resources.grouped.cloud_drive ?? 0 },
-  { label: '磁力', value: resources.grouped.magnet ?? 0 },
-  { label: 'ED2K', value: resources.grouped.ed2k ?? 0 },
-  { label: 'HTTP', value: resources.grouped.http ?? 0 },
-  { label: '文件', value: resources.grouped.files ?? 0 }
+  { label: '网盘', value: resources.dashboardGrouped.cloud_drive ?? 0 },
+  { label: '磁力', value: resources.dashboardGrouped.magnet ?? 0 },
+  { label: 'ED2K', value: resources.dashboardGrouped.ed2k ?? 0 },
+  { label: 'HTTP', value: resources.dashboardGrouped.http ?? 0 },
+  { label: '文件', value: resources.dashboardGrouped.files ?? 0 }
 ])
 
 const linkTypes = computed(() =>
