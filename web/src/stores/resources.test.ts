@@ -15,12 +15,11 @@ describe('useResourcesStore', () => {
     vi.mocked(apiPost).mockReset()
   })
 
-  it('loads resources and grouped counts', async () => {
+  it('loads resources without grouped counts', async () => {
     vi.mocked(apiGet)
       .mockResolvedValueOnce({
         items: [{ id: 'link:1', kind: 'link', category: 'cloud_drive', title: 'Course' }],
-        total: 1,
-        grouped: { cloud_drive: 1, magnet: 0, ed2k: 0, http: 0, files: 0 }
+        total: 1
       })
       .mockResolvedValueOnce({
         grouped: { cloud_drive: 1, magnet: 2, ed2k: 0, http: 3, files: 4 }
@@ -29,8 +28,10 @@ describe('useResourcesStore', () => {
         grouped: { aliyun: 1, quark: 3, magnet: 2 }
       })
     const store = useResourcesStore()
+    store.grouped = { files: 9 }
 
     await store.load({ keyword: 'course', category: 'cloud_drive', channelId: 7 })
+    expect(store.grouped.files).toBe(9)
     await store.loadGrouped()
     await store.loadLinkTypesGrouped()
 
@@ -59,8 +60,7 @@ describe('useResourcesStore', () => {
   it('passes page offsets when loading resources', async () => {
     vi.mocked(apiGet).mockResolvedValue({
       items: [],
-      total: 75,
-      grouped: {}
+      total: 75
     })
     const store = useResourcesStore()
 

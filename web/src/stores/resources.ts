@@ -53,7 +53,6 @@ export const useResourcesStore = defineStore('resources', {
         const response = await apiGet<ResourcesResponse>(buildResourcePath('/api/resources', filters))
         this.items = response.items
         this.total = response.total
-        this.grouped = response.grouped
         return response
       })
     },

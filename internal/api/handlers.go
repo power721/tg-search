@@ -2741,7 +2741,13 @@ func (h handlers) resources(c *gin.Context) {
 		errorJSON(c, http.StatusInternalServerError, err)
 		return
 	}
-	c.JSON(http.StatusOK, result)
+	c.JSON(http.StatusOK, struct {
+		Items []resource.Item `json:"items"`
+		Total int             `json:"total"`
+	}{
+		Items: result.Items,
+		Total: result.Total,
+	})
 }
 
 func (h handlers) trendingResources(c *gin.Context) {

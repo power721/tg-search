@@ -585,7 +585,6 @@ export interface ResourceItem {
 export interface ResourcesResponse {
   items: ResourceItem[]
   total: number
-  grouped: Record<string, number>
 }
 
 export interface ResourcesGroupedResponse {

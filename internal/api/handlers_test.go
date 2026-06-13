@@ -328,12 +328,19 @@ func TestResourcesAPI(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s, want 200", w.Code, w.Body.String())
 	}
-	var body resource.ListResult
+	var body struct {
+		Items   []resource.Item  `json:"items"`
+		Total   int              `json:"total"`
+		Grouped *json.RawMessage `json:"grouped"`
+	}
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
-	if body.Total != 2 || body.Grouped["_total"] != 2 {
+	if body.Total != 2 {
 		t.Fatalf("resources body = %+v, want link and file", body)
+	}
+	if body.Grouped != nil {
+		t.Fatalf("resources response returned grouped stats: %s", w.Body.String())
 	}
 	var linkItem *resource.Item
 	var fileItem *resource.Item
@@ -752,7 +759,7 @@ func TestDashboardResourceStatsReturnsResourceTypeCounts(t *testing.T) {
 	}
 }
 
-func TestResourcesAPIUsesCompleteGroupedCountsWithoutKeyword(t *testing.T) {
+func TestResourcesAPIUsesCompleteTotalWithoutGroupedStats(t *testing.T) {
 	ctx := context.Background()
 	deps := testDeps(t)
 	accountID, _ := deps.Accounts.Save(ctx, model.Account{Phone: "+10000000000", Username: "main", Status: model.AccountStatusOnline})
@@ -795,7 +802,11 @@ func TestResourcesAPIUsesCompleteGroupedCountsWithoutKeyword(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s, want 200", w.Code, w.Body.String())
 	}
-	var body resource.ListResult
+	var body struct {
+		Items   []resource.Item  `json:"items"`
+		Total   int              `json:"total"`
+		Grouped *json.RawMessage `json:"grouped"`
+	}
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
@@ -805,12 +816,12 @@ func TestResourcesAPIUsesCompleteGroupedCountsWithoutKeyword(t *testing.T) {
 	if body.Total != 202 {
 		t.Fatalf("total = %d, want complete resource count", body.Total)
 	}
-	if body.Grouped["_total"] != 202 {
-		t.Fatalf("grouped = %+v, want complete _total=202", body.Grouped)
+	if body.Grouped != nil {
+		t.Fatalf("resources response returned grouped stats: %s", w.Body.String())
 	}
 }
 
-func TestResourcesAPIUsesCompleteGroupedCountsWithKeyword(t *testing.T) {
+func TestResourcesAPIUsesCompleteTotalWithKeywordWithoutGroupedStats(t *testing.T) {
 	ctx := context.Background()
 	deps := testDeps(t)
 	accountID, _ := deps.Accounts.Save(ctx, model.Account{Phone: "+10000000000", Username: "main", Status: model.AccountStatusOnline})
@@ -853,7 +864,11 @@ func TestResourcesAPIUsesCompleteGroupedCountsWithKeyword(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s, want 200", w.Code, w.Body.String())
 	}
-	var body resource.ListResult
+	var body struct {
+		Items   []resource.Item  `json:"items"`
+		Total   int              `json:"total"`
+		Grouped *json.RawMessage `json:"grouped"`
+	}
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
@@ -863,8 +878,8 @@ func TestResourcesAPIUsesCompleteGroupedCountsWithKeyword(t *testing.T) {
 	if body.Total != 202 {
 		t.Fatalf("total = %d, want complete resource count", body.Total)
 	}
-	if body.Grouped["_total"] != 202 {
-		t.Fatalf("grouped = %+v, want complete _total=202", body.Grouped)
+	if body.Grouped != nil {
+		t.Fatalf("resources response returned grouped stats: %s", w.Body.String())
 	}
 }
 
