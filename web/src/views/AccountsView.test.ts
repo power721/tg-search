@@ -102,6 +102,7 @@ describe('AccountsView', () => {
     expect(wrapper.text()).toContain('添加账号')
     expect(wrapper.text()).toContain('登出')
     expect(wrapper.text()).toContain('登录')
+    expect(wrapper.text()).toContain('同步头像')
     expect(wrapper.text()).toContain('删除')
   })
 

@@ -25,6 +25,7 @@ const page = ref(1)
 const pageSize = ref(20)
 const pageSizeOptions = [10, 20, 50]
 const syncingAccountIds = ref(new Set<number>())
+const syncingAvatarAccountIds = ref(new Set<number>())
 let qrPolling: number | undefined
 
 const totalPages = computed(() => Math.max(1, Math.ceil(telegram.accounts.length / pageSize.value)))
@@ -278,6 +279,22 @@ async function syncAccountChannels(account: TelegramAccount) {
   }
 }
 
+async function syncAccountAvatar(account: TelegramAccount) {
+  const next = new Set(syncingAvatarAccountIds.value)
+  next.add(account.id)
+  syncingAvatarAccountIds.value = next
+  try {
+    await telegram.syncAccountAvatar(account.id)
+    message.success(`${account.phone} 头像同步已提交`)
+  } catch {
+    message.error(`${account.phone} 头像同步失败`)
+  } finally {
+    const done = new Set(syncingAvatarAccountIds.value)
+    done.delete(account.id)
+    syncingAvatarAccountIds.value = done
+  }
+}
+
 onBeforeUnmount(() => {
   stopQRPolling()
 })
@@ -356,6 +373,15 @@ onBeforeUnmount(() => {
                   同步频道
                 </n-button>
                 <n-button
+                  v-if="!needsLogin(account)"
+                  size="small"
+                  :disabled="account.status !== 'ONLINE'"
+                  :loading="syncingAvatarAccountIds.has(account.id)"
+                  @click="syncAccountAvatar(account)"
+                >
+                  同步头像
+                </n-button>
+                <n-button
                   size="small"
                   type="error"
                   ghost
@@ -417,6 +443,13 @@ onBeforeUnmount(() => {
               :loading="syncingAccountIds.has(account.id)"
               @click="syncAccountChannels(account)"
             >同步频道</n-button>
+            <n-button
+              v-if="!needsLogin(account)"
+              size="small"
+              :disabled="account.status !== 'ONLINE'"
+              :loading="syncingAvatarAccountIds.has(account.id)"
+              @click="syncAccountAvatar(account)"
+            >同步头像</n-button>
             <n-button size="small" type="error" ghost :loading="telegram.loading" @click="confirmDeleteAccount(account)">删除</n-button>
           </div>
         </div>
