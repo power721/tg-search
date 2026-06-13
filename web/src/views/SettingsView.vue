@@ -1350,7 +1350,7 @@ function versionStatusText() {
                 <n-form-item label="分片超时">
                   <n-input v-model:value="runtimeForm.streamChunkTimeout" data-testid="runtime-stream-timeout-input" />
                 </n-form-item>
-                <n-form-item label="媒体下载并发（立即生效）">
+                <n-form-item label="媒体下载并发">
                   <n-input v-model:value="runtimeForm.mediaConcurrency" data-testid="runtime-media-concurrency-input" inputmode="numeric" />
                 </n-form-item>
               </div>
