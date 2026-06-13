@@ -24,6 +24,7 @@ const page = ref(1)
 const pageSize = ref(20)
 const pageSizeOptions = [10, 20, 50]
 const syncingAccountIds = ref(new Set<number>())
+const syncingAvatarAccountIds = ref(new Set<number>())
 let qrPolling: number | undefined
 
 const totalPages = computed(() => Math.max(1, Math.ceil(telegram.accounts.length / pageSize.value)))
@@ -274,6 +275,22 @@ async function syncAccountChannels(account: TelegramAccount) {
     const done = new Set(syncingAccountIds.value)
     done.delete(account.id)
     syncingAccountIds.value = done
+  }
+}
+
+async function syncAccountAvatar(account: TelegramAccount) {
+  const next = new Set(syncingAvatarAccountIds.value)
+  next.add(account.id)
+  syncingAvatarAccountIds.value = next
+  try {
+    await telegram.syncAccountAvatar(account.id)
+    message.success(`${account.phone} 头像同步已提交`)
+  } catch {
+    message.error(`${account.phone} 头像同步失败`)
+  } finally {
+    const done = new Set(syncingAvatarAccountIds.value)
+    done.delete(account.id)
+    syncingAvatarAccountIds.value = done
   }
 }
 
