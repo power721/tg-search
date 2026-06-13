@@ -657,8 +657,36 @@ func (s *Service) computeGlobalGrouped(ctx context.Context) (map[string]int, err
 		fileCount = count
 	}
 
-	// Return total count in _total key instead of per-category breakdown
 	grouped["_total"] = linkCount + fileCount
+	return grouped, nil
+}
+
+func (s *Service) ResourceTypeStats(ctx context.Context) (map[string]int, error) {
+	grouped := defaultGrouped()
+	var total int
+
+	if s.links != nil {
+		linkGrouped, err := s.links.CountByResourceCategory(ctx, repository.LinkSearchParams{})
+		if err != nil {
+			return nil, err
+		}
+		for category, count := range linkGrouped {
+			grouped[category] = count
+			total += count
+		}
+	}
+	if s.files != nil {
+		count, err := s.files.CountResources(ctx, repository.FileSearchParams{
+			ExcludedCategories: defaultExcludedFileCategories(),
+		})
+		if err != nil {
+			return nil, err
+		}
+		grouped["files"] = count
+		total += count
+	}
+
+	grouped["_total"] = total
 	return grouped, nil
 }
 

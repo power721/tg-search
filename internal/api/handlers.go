@@ -2805,6 +2805,19 @@ func (h handlers) resourcesGrouped(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"grouped": grouped})
 }
 
+func (h handlers) dashboardResourceStats(c *gin.Context) {
+	if h.deps.Resources == nil {
+		errorText(c, http.StatusServiceUnavailable, "resources are unavailable")
+		return
+	}
+	grouped, err := h.deps.Resources.ResourceTypeStats(c.Request.Context())
+	if err != nil {
+		errorJSON(c, http.StatusInternalServerError, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"grouped": grouped})
+}
+
 func (h handlers) resource(c *gin.Context) {
 	if h.deps.Resources == nil {
 		errorText(c, http.StatusServiceUnavailable, "resources are unavailable")

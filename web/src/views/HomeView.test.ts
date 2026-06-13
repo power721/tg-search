@@ -1,6 +1,7 @@
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { apiGet } from '@/api/client'
 import HomeView from './HomeView.vue'
 
 const { routerPush } = vi.hoisted(() => ({
@@ -34,7 +35,7 @@ vi.mock('@/api/client', () => ({
         media_over_quota: false
       })
     }
-    if (path === '/api/resources/grouped') {
+    if (path === '/api/dashboard/resource-stats') {
       return Promise.resolve({
         grouped: { cloud_drive: 2, magnet: 1, ed2k: 0, http: 3, files: 4 }
       })
@@ -83,6 +84,8 @@ describe('HomeView', () => {
     expect(wrapper.text()).toContain('temporary failure')
     expect(wrapper.find('.home-search').exists()).toBe(true)
     expect(wrapper.get('input[name="q"]').attributes('placeholder')).toBe('搜索消息、链接、文件、频道')
+    expect(apiGet).toHaveBeenCalledWith('/api/dashboard/resource-stats')
+    expect(apiGet).not.toHaveBeenCalledWith('/api/resources/grouped')
   })
 
   it('navigates home global search to the search page', async () => {

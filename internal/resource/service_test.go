@@ -150,6 +150,53 @@ func TestResourceLibraryDeleteManyRemovesLinksAndFiles(t *testing.T) {
 	}
 }
 
+func TestResourceLibraryResourceTypeStatsCountsDashboardCategories(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(filepath.Join(t.TempDir(), "telegram.db"))
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	defer conn.Close()
+	if err := db.Migrate(ctx, conn); err != nil {
+		t.Fatalf("Migrate returned error: %v", err)
+	}
+
+	accounts := repository.NewAccountRepository(conn)
+	channels := repository.NewChannelRepository(conn)
+	messages := repository.NewMessageRepository(conn)
+	links := repository.NewLinkRepository(conn)
+	files := repository.NewFileRepository(conn)
+
+	accountID, _ := accounts.Save(ctx, model.Account{Phone: "+10000000000", Status: model.AccountStatusOnline})
+	channelID, _ := channels.Save(ctx, model.Channel{AccountID: accountID, TelegramChannelID: 1, Title: "VIP", Type: model.ChannelTypeChannel})
+	stored, err := messages.SaveBatch(ctx, []model.Message{
+		{AccountID: accountID, ChannelID: channelID, TelegramMessageID: 1, Text: "ubuntu cloud", RawJSON: "{}", Date: time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)},
+		{AccountID: accountID, ChannelID: channelID, TelegramMessageID: 2, Text: "ubuntu magnet", RawJSON: "{}", Date: time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)},
+		{AccountID: accountID, ChannelID: channelID, TelegramMessageID: 3, Text: "ubuntu file", RawJSON: "{}", Date: time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)},
+	})
+	if err != nil {
+		t.Fatalf("save messages: %v", err)
+	}
+	if _, err := links.SaveBatch(ctx, stored[0].ID, []model.Link{{Type: "quark", Category: "cloud_drive", URL: "https://pan.quark.cn/s/ubuntu"}}); err != nil {
+		t.Fatalf("save cloud link: %v", err)
+	}
+	if _, err := links.SaveBatch(ctx, stored[1].ID, []model.Link{{Type: "magnet", Category: "magnet", URL: "magnet:?xt=urn:btih:ubuntu"}}); err != nil {
+		t.Fatalf("save magnet link: %v", err)
+	}
+	if _, err := files.SaveBatch(ctx, stored[2].ID, []model.File{{FileName: "ubuntu.iso", Extension: ".iso", SizeBytes: 5000, Category: "software"}}); err != nil {
+		t.Fatalf("save file: %v", err)
+	}
+
+	service := NewService(links, files)
+	grouped, err := service.ResourceTypeStats(ctx)
+	if err != nil {
+		t.Fatalf("ResourceTypeStats returned error: %v", err)
+	}
+	if grouped["cloud_drive"] != 1 || grouped["magnet"] != 1 || grouped["files"] != 1 || grouped["_total"] != 3 {
+		t.Fatalf("grouped = %+v, want cloud_drive=1 magnet=1 files=1 _total=3", grouped)
+	}
+}
+
 func TestResourceLibraryRanksQualityBeforeFreshness(t *testing.T) {
 	ctx := context.Background()
 	conn, err := db.Open(filepath.Join(t.TempDir(), "telegram.db"))

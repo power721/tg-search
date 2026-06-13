@@ -647,6 +647,9 @@ func TestResourcesGroupedReturnsGlobalCountsOutsideListWindow(t *testing.T) {
 	if body.Grouped["_total"] != 202 {
 		t.Fatalf("grouped = %+v, want _total=202", body.Grouped)
 	}
+	if body.Grouped["http"] != 0 || body.Grouped["cloud_drive"] != 0 {
+		t.Fatalf("grouped = %+v, want resources grouped endpoint to keep total-only category counts", body.Grouped)
+	}
 }
 
 func TestLinksGroupedReturnsCountsByLinkType(t *testing.T) {
@@ -695,6 +698,57 @@ func TestLinksGroupedReturnsCountsByLinkType(t *testing.T) {
 	}
 	if body.Grouped["aliyun"] != 1 || body.Grouped["quark"] != 1 || body.Grouped["magnet"] != 1 {
 		t.Fatalf("grouped = %+v, want counts by original link type", body.Grouped)
+	}
+}
+
+func TestDashboardResourceStatsReturnsResourceTypeCounts(t *testing.T) {
+	ctx := context.Background()
+	deps := testDeps(t)
+	accountID, _ := deps.Accounts.Save(ctx, model.Account{Phone: "+10000000000", Username: "main", Status: model.AccountStatusOnline})
+	channelID, _ := deps.Channels.Save(ctx, model.Channel{AccountID: accountID, TelegramChannelID: 1, Title: "VIP", Type: model.ChannelTypeChannel})
+	stored, err := deps.Messages.SaveBatch(ctx, []model.Message{
+		{
+			AccountID: accountID, ChannelID: channelID, TelegramMessageID: 1,
+			Text: "cloud resource", RawJSON: "{}", Date: time.Now().UTC(),
+		},
+		{
+			AccountID: accountID, ChannelID: channelID, TelegramMessageID: 2,
+			Text: "magnet resource", RawJSON: "{}", Date: time.Now().UTC(),
+		},
+		{
+			AccountID: accountID, ChannelID: channelID, TelegramMessageID: 3,
+			Text: "file resource", RawJSON: "{}", Date: time.Now().UTC(),
+		},
+	})
+	if err != nil {
+		t.Fatalf("save messages: %v", err)
+	}
+	if _, err := deps.Links.SaveBatch(ctx, stored[0].ID, []model.Link{{Type: "quark", Category: "cloud_drive", URL: "https://pan.quark.cn/s/ubuntu"}}); err != nil {
+		t.Fatalf("save cloud link: %v", err)
+	}
+	if _, err := deps.Links.SaveBatch(ctx, stored[1].ID, []model.Link{{Type: "magnet", Category: "magnet", URL: "magnet:?xt=urn:btih:ubuntu"}}); err != nil {
+		t.Fatalf("save magnet link: %v", err)
+	}
+	if _, err := deps.Files.SaveBatch(ctx, stored[2].ID, []model.File{{FileName: "ubuntu.iso", Extension: ".iso", SizeBytes: 5000, Category: "software"}}); err != nil {
+		t.Fatalf("save file: %v", err)
+	}
+
+	router := NewRouter(deps)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/dashboard/resource-stats", nil)
+	withAdminSession(t, deps, req)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", w.Code, w.Body.String())
+	}
+	var body struct {
+		Grouped map[string]int `json:"grouped"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if body.Grouped["cloud_drive"] != 1 || body.Grouped["magnet"] != 1 || body.Grouped["files"] != 1 || body.Grouped["_total"] != 3 {
+		t.Fatalf("grouped = %+v, want cloud_drive=1 magnet=1 files=1 _total=3", body.Grouped)
 	}
 }
 

@@ -157,6 +157,7 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	adminOnly.GET("/settings/system-info", h.getSystemInfoSettings)
 	adminOnly.GET("/storage/usage", h.storageUsage)
 	adminOnly.GET("/status", h.status)
+	adminOnly.GET("/dashboard/resource-stats", h.dashboardResourceStats)
 	adminOnly.GET("/tasks", h.tasks)
 	adminOnly.POST("/tasks/bulk-delete", h.bulkDeleteTasks)
 	adminOnly.GET("/tasks/:id", h.task)
