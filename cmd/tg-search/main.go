@@ -16,6 +16,7 @@ import (
 	"tg-search/internal/adminauth"
 	aipkg "tg-search/internal/ai"
 	"tg-search/internal/api"
+	avatarpkg "tg-search/internal/avatar"
 	"tg-search/internal/channel"
 	"tg-search/internal/config"
 	"tg-search/internal/db"
@@ -138,6 +139,14 @@ func run(configPath string) error {
 	mediaLimiter := medialimit.New(cfg.Telegram.Media.Concurrency)
 	avatarLimiter := medialimit.New(20) // Higher concurrency for small images
 	syncQueue := scheduler.NewRetryQueue(scheduler.RetryQueueOptions{Policy: retryPolicy, Logger: logs.SyncLog})
+	avatarQueue := scheduler.NewRetryQueue(scheduler.RetryQueueOptions{Policy: retryPolicy, Logger: logs.App})
+	avatarService := avatarpkg.NewService(avatarpkg.ServiceOptions{
+		StorageRoot: cfg.Storage.Path,
+		Queue:       avatarQueue,
+		Limiter:     avatarLimiter,
+		Telegram:    tgClient,
+		Logger:      logs.App,
+	})
 	resourceService := resource.NewService(links, files, resourceStats, resourceIndex)
 	if stats, err := resourceService.IndexStats(ctx); err == nil && stats.IndexedRows == 0 {
 		if err := resourceService.RebuildIndex(ctx); err != nil {
@@ -288,6 +297,7 @@ func run(configPath string) error {
 	router := api.NewRouter(api.Dependencies{
 		Logger: logs.App,
 		Users:  users, APIKeys: apiKeys, Settings: settings, AdminAuth: adminAuth, RuntimeConfig: cfg, StorageUsage: storageUsage, ImageCache: imageCache,
+		AvatarCache: imageCache, AvatarService: avatarService,
 		Accounts: accounts, Channels: channels, Messages: messages, Links: links, Files: files, WatchRules: watchRules, RemoteSearch: remoteSearch, SavedSearches: savedSearches, BotSubscriptions: botSubscriptions, Webhooks: webhooks, Deliveries: deliveries, RemoteSearchExec: remoteSearchService, Maintenance: maintenance, Status: status,
 		BackupDB: conn, BackupDir: filepath.Join(cfg.Storage.Path, "backup"),
 		SyncQueue: syncQueue, Search: searchService, History: historyService, Resources: resourceService, Notifications: notificationService, ChannelSync: channelService, ChannelWebAccess: channelWebAccessService, AccountRuntime: accountManager,
