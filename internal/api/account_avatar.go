@@ -1,16 +1,14 @@
 package api
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
-	"tg-search/internal/model"
+	avatarpkg "tg-search/internal/avatar"
 )
 
 func (h handlers) serveAccountAvatar(c *gin.Context) {
@@ -33,8 +31,6 @@ func (h handlers) serveAccountAvatar(c *gin.Context) {
 		return
 	}
 
-	cacheKey := accountAvatarCacheKey(account)
-
 	// Set ETag based on photo ID for efficient browser caching
 	etag := fmt.Sprintf(`"acc-%d-%d"`, account.ID, account.PhotoID)
 	c.Header("ETag", etag)
@@ -45,51 +41,16 @@ func (h handlers) serveAccountAvatar(c *gin.Context) {
 		return
 	}
 
-	if entry, hit := h.avatarCacheGet(c.Request.Context(), cacheKey); hit {
-		serveAvatarData(c, http.DetectContentType(entry.Data), entry.Data)
-		return
-	}
-
-	session := h.accountSession(account)
-
-	var imageData []byte
-	var imageMIME string
-	downloadErr := h.downloadAvatar(c.Request.Context(), session, cacheKey, func() error {
-		if entry, hit := h.avatarCacheGet(c.Request.Context(), cacheKey); hit {
-			imageData = entry.Data
-			imageMIME = http.DetectContentType(entry.Data)
-			return nil
+	// Check local file first
+	if h.deps.RuntimeConfig.Storage.Path != "" {
+		localPath := avatarpkg.AvatarAbsolutePath(h.deps.RuntimeConfig.Storage.Path, "account", account.ID, account.PhotoID)
+		if avatarpkg.FileExists(localPath) {
+			c.Header("Cache-Control", "public, max-age=31536000, immutable")
+			c.File(localPath)
+			return
 		}
-		// Set 10-second timeout for avatar download
-		downloadCtx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
-		defer cancel()
-		img, err := h.deps.Telegram.DownloadUserAvatar(
-			downloadCtx,
-			session,
-			account.TelegramUserID,
-			account.PhotoID,
-		)
-		if err != nil {
-			return err
-		}
-		imageData = img.Data
-		imageMIME = img.MIMEType
-		h.avatarCacheSet(c.Request.Context(), cacheKey, imageData)
-		return nil
-	})
-	if downloadErr != nil {
-		h.markMediaAccountAuthFailure(c.Request.Context(), session, downloadErr)
-		errorText(c, mediaErrorStatus(downloadErr), downloadErr.Error())
-		return
 	}
 
-	mime := imageMIME
-	if mime == "" {
-		mime = http.DetectContentType(imageData)
-	}
-	serveAvatarData(c, mime, imageData)
-}
-
-func accountAvatarCacheKey(account model.Account) string {
-	return fmt.Sprintf("acc-avatar:%d:%d", account.ID, account.PhotoID)
+	// File not found locally, return 404
+	errorText(c, http.StatusNotFound, "avatar not downloaded yet")
 }
