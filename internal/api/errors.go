@@ -63,6 +63,9 @@ var exactErrorMessages = map[string]string{
 	"telegram password required":                          "需要 Telegram 两步验证密码",
 	"username is required":                                "请输入用户名",
 	"watch rule already exists for channel":               "该频道已存在监听规则",
+	"account has no avatar to sync":                       "该账号没有头像",
+	"avatar service is unavailable":                       "头像同步服务不可用",
+	"id must be a positive integer":                       "ID 必须是正整数",
 }
 
 var fieldLabels = map[string]string{
