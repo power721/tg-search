@@ -362,6 +362,15 @@ onBeforeUnmount(() => {
                   同步频道
                 </n-button>
                 <n-button
+                  v-if="!needsLogin(account)"
+                  size="small"
+                  :disabled="account.status !== 'ONLINE'"
+                  :loading="syncingAvatarAccountIds.has(account.id)"
+                  @click="syncAccountAvatar(account)"
+                >
+                  同步头像
+                </n-button>
+                <n-button
                   size="small"
                   type="error"
                   ghost
@@ -369,6 +378,9 @@ onBeforeUnmount(() => {
                   @click="confirmDeleteAccount(account)"
                 >
                   删除
+                </n-button>
+              </div>
+            </td>
                 </n-button>
               </div>
             </td>
