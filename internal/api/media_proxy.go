@@ -354,3 +354,34 @@ func mediaErrorStatus(err error) int {
 		return http.StatusInternalServerError
 	}
 }
+
+func (h handlers) avatarCacheGet(ctx context.Context, key string) (storage.MediaCacheEntry, bool) {
+	if h.deps.AvatarCache == nil {
+		return storage.MediaCacheEntry{}, false
+	}
+	entry, hit, err := h.deps.AvatarCache.Get(ctx, key)
+	if err != nil {
+		h.deps.Logger.Warn("read avatar cache failed", zap.Error(err))
+		return storage.MediaCacheEntry{}, false
+	}
+	return entry, hit
+}
+
+func (h handlers) avatarCacheSet(ctx context.Context, key string, data []byte) {
+	if h.deps.AvatarCache == nil {
+		return
+	}
+	if err := h.deps.AvatarCache.Set(ctx, key, data); err != nil {
+		h.deps.Logger.Warn("write avatar cache failed", zap.Error(err))
+	}
+}
+
+// downloadAvatar downloads small images (avatars, thumbnails) using a
+// dedicated AvatarLimiter with higher concurrency than MediaLimiter,
+// so they don't queue behind large media downloads like video streams.
+func (h handlers) downloadAvatar(ctx context.Context, _ telegram.AccountSession, _ string, fn func() error) error {
+	if h.deps.AvatarLimiter != nil {
+		return h.deps.AvatarLimiter.Run(ctx, fn)
+	}
+	return fn()
+}
