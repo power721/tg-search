@@ -381,9 +381,6 @@ onBeforeUnmount(() => {
                 </n-button>
               </div>
             </td>
-                </n-button>
-              </div>
-            </td>
           </tr>
           <tr v-if="!telegram.loading && telegram.accounts.length === 0">
             <td colspan="6">

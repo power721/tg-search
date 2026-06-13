@@ -94,7 +94,6 @@ describe('AccountsView', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('账号')
-    expect(wrapper.text()).not.toContain('头像')
     expect(wrapper.text()).toContain('手机号')
     expect(wrapper.text()).toContain('状态')
     expect(wrapper.text()).toContain('最后在线')
@@ -102,6 +101,7 @@ describe('AccountsView', () => {
     expect(wrapper.text()).toContain('添加账号')
     expect(wrapper.text()).toContain('登出')
     expect(wrapper.text()).toContain('登录')
+    expect(wrapper.text()).toContain('同步头像')
     expect(wrapper.text()).toContain('删除')
     expect(wrapper.find('.account-avatar-placeholder').exists()).toBe(false)
   })
