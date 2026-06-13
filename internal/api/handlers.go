@@ -1319,6 +1319,30 @@ func (h handlers) password(c *gin.Context) {
 	h.updateAccountProfile(c, account, profile)
 }
 
+func (h handlers) syncAccountAvatar(c *gin.Context) {
+	if h.deps.AvatarService == nil {
+		errorText(c, http.StatusServiceUnavailable, "avatar service is unavailable")
+		return
+	}
+	id, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
+	if err != nil || id <= 0 {
+		errorText(c, http.StatusBadRequest, "id must be a positive integer")
+		return
+	}
+	account, err := h.deps.Accounts.FindByID(c.Request.Context(), id)
+	if err != nil {
+		errorText(c, http.StatusNotFound, "account not found")
+		return
+	}
+	if account.PhotoID <= 0 {
+		errorText(c, http.StatusBadRequest, "account has no avatar to sync")
+		return
+	}
+
+	job := h.deps.AvatarService.EnqueueAccountAvatar(context.WithoutCancel(c.Request.Context()), account)
+	c.JSON(http.StatusAccepted, gin.H{"status": "queued", "job_id": job.ID})
+}
+
 func (h handlers) telethonSessionLogin(c *gin.Context) {
 	var req struct {
 		SessionString string `json:"session_string"`

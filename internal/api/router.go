@@ -179,6 +179,7 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	adminOnly.GET("/accounts", h.accounts)
 	adminOnly.GET("/accounts/:id/avatar", h.serveAccountAvatar)
 	adminOnly.HEAD("/accounts/:id/avatar", h.serveAccountAvatar)
+	adminOnly.POST("/accounts/:id/sync-avatar", h.syncAccountAvatar)
 	adminOnly.POST("/accounts/:id/logout", h.logoutAccount)
 	adminOnly.DELETE("/accounts/:id", h.deleteAccount)
 	adminOnly.POST("/accounts/:id/channels/sync-metadata", h.syncAccountChannels)
