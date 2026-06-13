@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { vLazyLoad } from '@/directives/lazyLoad'
 
 interface Props {
   id: number
@@ -57,7 +58,8 @@ function onImageError() {
   >
     <img
       v-if="showImage"
-      :src="avatarUrl"
+      v-lazy-load
+      :data-src="avatarUrl"
       :alt="name"
       class="avatar-image"
       @error="onImageError"
