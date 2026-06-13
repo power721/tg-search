@@ -1324,6 +1324,10 @@ func (h handlers) syncAccountAvatar(c *gin.Context) {
 		errorText(c, http.StatusServiceUnavailable, "avatar service is unavailable")
 		return
 	}
+	if h.deps.Telegram == nil {
+		errorText(c, http.StatusServiceUnavailable, "telegram client is unavailable")
+		return
+	}
 	id, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
 	if err != nil || id <= 0 {
 		errorText(c, http.StatusBadRequest, "id must be a positive integer")
@@ -1334,6 +1338,24 @@ func (h handlers) syncAccountAvatar(c *gin.Context) {
 		errorText(c, http.StatusNotFound, "account not found")
 		return
 	}
+
+	// Fetch latest profile to get current PhotoID
+	session := h.accountSession(account)
+	profile, err := h.deps.Telegram.GetUserProfile(c.Request.Context(), session)
+	if err != nil {
+		errorJSON(c, http.StatusBadRequest, err)
+		return
+	}
+
+	// Update account PhotoID if it changed
+	if profile.PhotoID != account.PhotoID {
+		account.PhotoID = profile.PhotoID
+		if err := h.deps.Accounts.UpdatePhotoID(c.Request.Context(), account.ID, profile.PhotoID); err != nil {
+			errorJSON(c, http.StatusInternalServerError, err)
+			return
+		}
+	}
+
 	if account.PhotoID <= 0 {
 		errorText(c, http.StatusBadRequest, "account has no avatar to sync")
 		return

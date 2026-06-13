@@ -125,6 +125,7 @@ type Client interface {
 	DownloadMessageImage(ctx context.Context, session AccountSession, channel MediaChannelRef, messageID int) (ImageFile, error)
 	DownloadChannelAvatar(ctx context.Context, session AccountSession, channelID int64, accessHash int64, photoID int64) (ImageFile, error)
 	DownloadUserAvatar(ctx context.Context, session AccountSession, userID int64, photoID int64) (ImageFile, error)
+	GetUserProfile(ctx context.Context, session AccountSession) (Profile, error)
 }
 
 type Credentials struct {
@@ -228,4 +229,8 @@ func (NopClient) DownloadChannelAvatar(context.Context, AccountSession, int64, i
 
 func (NopClient) DownloadUserAvatar(context.Context, AccountSession, int64, int64) (ImageFile, error) {
 	return ImageFile{}, ErrUnavailable
+}
+
+func (NopClient) GetUserProfile(context.Context, AccountSession) (Profile, error) {
+	return Profile{}, ErrUnavailable
 }

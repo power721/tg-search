@@ -274,6 +274,27 @@ func (g *GotdClient) DownloadUserAvatar(ctx context.Context, session AccountSess
 	return out, err
 }
 
+func (g *GotdClient) GetUserProfile(ctx context.Context, session AccountSession) (Profile, error) {
+	var profile Profile
+	err := g.withClient(ctx, session.SessionPath, func(ctx context.Context, client *gotdtelegram.Client) error {
+		users, err := client.API().UsersGetUsers(ctx, []tg.InputUserClass{&tg.InputUserSelf{}})
+		if err != nil {
+			return err
+		}
+		if len(users) == 0 {
+			return fmt.Errorf("no user returned from GetUsers")
+		}
+		user, ok := users[0].(*tg.User)
+		if !ok {
+			return fmt.Errorf("unexpected user type %T", users[0])
+		}
+		profile = profileFromUser(user)
+		return nil
+	})
+	return profile, err
+}
+
+
 func (g *GotdClient) withClient(ctx context.Context, sessionPath string, fn func(context.Context, *gotdtelegram.Client) error) error {
 	credentials, err := g.credentials.TelegramCredentials(ctx)
 	if err != nil {
