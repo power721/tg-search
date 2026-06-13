@@ -239,6 +239,7 @@ export interface TelegramChannel {
   type: string
   member_count: number
   description: string
+  photo_id: number
   avatar_state: string
   sync_state: string
   listen_state: string

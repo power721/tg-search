@@ -4,6 +4,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useDialog, useMessage } from 'naive-ui'
 import type { TelegramAccount } from '@/api/types'
 import AppPagination from '@/components/common/AppPagination.vue'
+import Avatar from '@/components/common/Avatar.vue'
 import { useTelegramStore } from '@/stores/telegram'
 
 const telegram = useTelegramStore()
@@ -300,6 +301,7 @@ onBeforeUnmount(() => {
       <table class="data-table">
         <thead>
           <tr>
+            <th style="width: 60px">头像</th>
             <th>手机号</th>
             <th>名称</th>
             <th>状态</th>
@@ -310,7 +312,7 @@ onBeforeUnmount(() => {
         </thead>
         <tbody>
           <tr v-if="telegram.loading && telegram.accounts.length === 0">
-            <td colspan="6">
+            <td colspan="7">
               <div class="loading-stack" aria-label="正在加载账号">
                 <span class="skeleton-line" />
                 <span class="skeleton-line short" />
@@ -318,6 +320,15 @@ onBeforeUnmount(() => {
             </td>
           </tr>
           <tr v-for="account in pagedAccounts" :key="account.id">
+            <td>
+              <Avatar
+                :id="account.id"
+                :photo-id="account.photo_id"
+                type="account"
+                :name="displayName(account.first_name, account.last_name, account.username)"
+                :size="40"
+              />
+            </td>
             <td>{{ account.phone }}</td>
             <td>{{ displayName(account.first_name, account.last_name, account.username) }}</td>
             <td>
@@ -357,7 +368,7 @@ onBeforeUnmount(() => {
             </td>
           </tr>
           <tr v-if="!telegram.loading && telegram.accounts.length === 0">
-            <td colspan="6">
+            <td colspan="7">
               <div class="empty-state">
                 <strong>暂无账号</strong>
                 <span>添加 Telegram 账号后即可同步频道元数据。</span>
@@ -376,6 +387,14 @@ onBeforeUnmount(() => {
         </div>
         <div v-for="account in pagedAccounts" :key="account.id" class="mobile-card">
           <div class="mobile-card-header">
+            <Avatar
+              :id="account.id"
+              :photo-id="account.photo_id"
+              type="account"
+              :name="displayName(account.first_name, account.last_name, account.username)"
+              :size="48"
+              style="margin-right: 12px"
+            />
             <div class="mobile-card-title">
               <span class="mobile-card-name">{{ displayName(account.first_name, account.last_name, account.username) }}</span>
               <span class="mobile-card-sub">{{ account.phone }}</span>

@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useDialog } from 'naive-ui'
 import type { ListenRulesPayload, TelegramChannel, WatchRule } from '@/api/types'
+import Avatar from '@/components/common/Avatar.vue'
 import WebAccessBadge from '@/components/channels/WebAccessBadge.vue'
 import { useChannelsStore } from '@/stores/channels'
 import { normalizePrivateChannelID } from '@/utils/telegramLinks'
@@ -481,6 +482,7 @@ async function useGlobalRule() {
       <table class="data-table">
         <thead>
           <tr>
+            <th style="width: 60px">头像</th>
             <th>
               <button class="sort-header" type="button" data-sort-key="title" @click="sortBy('title')">
                 标题{{ sortIndicator('title') }}
@@ -506,7 +508,7 @@ async function useGlobalRule() {
         </thead>
         <tbody>
           <tr v-if="channels.loading && channels.items.length === 0">
-            <td colspan="9">
+            <td colspan="10">
               <div class="loading-stack" aria-label="正在加载频道">
                 <span class="skeleton-line" />
                 <span class="skeleton-line" />
@@ -515,6 +517,15 @@ async function useGlobalRule() {
             </td>
           </tr>
           <tr v-for="channel in filteredChannels" :key="channel.id">
+            <td>
+              <Avatar
+                :id="channel.id"
+                :photo-id="channel.photo_id"
+                type="channel"
+                :name="channel.title"
+                :size="40"
+              />
+            </td>
             <td class="title-cell">
               <div class="channel-title-row">
                 <div class="channel-title-text">
@@ -598,7 +609,7 @@ async function useGlobalRule() {
             </td>
           </tr>
           <tr v-if="!channels.loading && filteredChannels.length === 0">
-            <td colspan="9">
+            <td colspan="10">
               <div class="empty-state">
                 <strong>暂无频道</strong>
                 <span>调整筛选条件，或刷新 Telegram 元数据。</span>
@@ -618,6 +629,14 @@ async function useGlobalRule() {
         </div>
         <div v-for="channel in filteredChannels" :key="channel.id" class="mobile-card">
           <div class="mobile-card-header">
+            <Avatar
+              :id="channel.id"
+              :photo-id="channel.photo_id"
+              type="channel"
+              :name="channel.title"
+              :size="48"
+              style="margin-right: 12px"
+            />
             <div class="mobile-card-title">
               <a v-if="channelDeepLink(channel)" class="channel-title-link" :href="channelDeepLink(channel)">{{ channel.title }}</a>
               <span v-else>{{ channel.title }}</span>
