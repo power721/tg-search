@@ -2914,6 +2914,12 @@ func (h handlers) updateAccountProfile(c *gin.Context, account model.Account, pr
 		errorJSON(c, http.StatusInternalServerError, err)
 		return
 	}
+
+	// Trigger avatar download in background
+	if h.deps.AvatarService != nil && account.PhotoID > 0 {
+		h.deps.AvatarService.EnqueueAccountAvatar(context.WithoutCancel(c.Request.Context()), account)
+	}
+
 	h.respondWithOnlineAccount(c, account)
 }
 
@@ -2982,6 +2988,10 @@ func (h handlers) respondWithOnlineAccount(c *gin.Context, account model.Account
 							return err
 						}
 					}
+				}
+				// Trigger channel avatar downloads in background
+				if h.deps.AvatarService != nil {
+					h.deps.AvatarService.EnqueueChannelAvatars(ctx, accountForSync, items)
 				}
 				return nil
 			})

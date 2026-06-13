@@ -13,6 +13,7 @@ import (
 
 	"tg-search/internal/adminauth"
 	"tg-search/internal/apikey"
+	"tg-search/internal/avatar"
 	"tg-search/internal/channel"
 	"tg-search/internal/config"
 	"tg-search/internal/history"
@@ -73,6 +74,7 @@ type Dependencies struct {
 	Telegram         telegram.Client
 	MediaLimiter     *medialimit.Limiter
 	AvatarLimiter    *medialimit.Limiter
+	AvatarService    *avatar.Service
 	Sessions         *session.Manager
 	CodeStore        *telegram.CodeStore
 	QRLogins         *QRLoginStore
