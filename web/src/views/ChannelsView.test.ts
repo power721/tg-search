@@ -603,3 +603,89 @@ describe('ChannelsView', () => {
     expect(apiDelete).toHaveBeenCalledWith('/api/watch-rules/9')
   })
 })
+
+describe('three-state sorting', () => {
+  it('cycles through ascending, descending, and default order', async () => {
+    const wrapper = mount(ChannelsView)
+    await flushPromises()
+
+    // Initial state: sortKey is null (default order)
+    const vm = wrapper.vm as any
+    expect(vm.sortKey).toBe(null)
+    expect(vm.sortDirection).toBe('asc')
+
+    // First click: ascending
+    await wrapper.find('[data-sort-key="title"]').trigger('click')
+    expect(vm.sortKey).toBe('title')
+    expect(vm.sortDirection).toBe('asc')
+
+    // Second click: descending
+    await wrapper.find('[data-sort-key="title"]').trigger('click')
+    expect(vm.sortKey).toBe('title')
+    expect(vm.sortDirection).toBe('desc')
+
+    // Third click: reset to default
+    await wrapper.find('[data-sort-key="title"]').trigger('click')
+    expect(vm.sortKey).toBe(null)
+    expect(vm.sortDirection).toBe('asc')
+  })
+
+  it('resets to ascending when switching columns', async () => {
+    const wrapper = mount(ChannelsView)
+    await flushPromises()
+
+    // Click title to ascending
+    await wrapper.find('[data-sort-key="title"]').trigger('click')
+    const vm = wrapper.vm as any
+    expect(vm.sortKey).toBe('title')
+    expect(vm.sortDirection).toBe('asc')
+
+    // Click username - should start at ascending
+    await wrapper.find('[data-sort-key="username"]').trigger('click')
+    expect(vm.sortKey).toBe('username')
+    expect(vm.sortDirection).toBe('asc')
+  })
+
+  it('sorts by ID when sortKey is null', async () => {
+    const wrapper = mount(ChannelsView)
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+
+    // Verify default state
+    expect(vm.sortKey).toBe(null)
+
+    // Get filtered channels (should be sorted by ID)
+    const filtered = vm.filteredChannels
+
+    // Verify channels are in ID order
+    for (let i = 1; i < filtered.length; i++) {
+      expect(filtered[i].id).toBeGreaterThan(filtered[i - 1].id)
+    }
+  })
+
+  it('shows no indicator when sortKey is null', async () => {
+    const wrapper = mount(ChannelsView)
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+
+    // Default state: no indicators
+    expect(vm.sortIndicator('title')).toBe('')
+    expect(vm.sortIndicator('username')).toBe('')
+    expect(vm.sortIndicator('indexed')).toBe('')
+
+    // Click title: ascending indicator
+    await wrapper.find('[data-sort-key="title"]').trigger('click')
+    expect(vm.sortIndicator('title')).toBe(' ↑')
+    expect(vm.sortIndicator('username')).toBe('')
+
+    // Click title again: descending indicator
+    await wrapper.find('[data-sort-key="title"]').trigger('click')
+    expect(vm.sortIndicator('title')).toBe(' ↓')
+
+    // Click title third time: no indicator
+    await wrapper.find('[data-sort-key="title"]').trigger('click')
+    expect(vm.sortIndicator('title')).toBe('')
+  })
+})

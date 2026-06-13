@@ -20,7 +20,7 @@ const typeFilter = ref('')
 const syncStateFilter = ref('')
 const listenStateFilter = ref('')
 const webAccessFilter = ref('')
-const sortKey = ref<'title' | 'username' | 'indexed'>('title')
+const sortKey = ref<'title' | 'username' | 'indexed' | null>(null)
 const sortDirection = ref<'asc' | 'desc'>('asc')
 const syncingChannelIds = ref(new Set<number>())
 const checkingWebAccessChannelIds = ref(new Set<number>())
@@ -198,6 +198,11 @@ function canCheckWebAccess(channel: TelegramChannel) {
 }
 
 function compareChannels(left: TelegramChannel, right: TelegramChannel) {
+  // Default order: by ID (fast numeric comparison)
+  if (sortKey.value === null) {
+    return left.id - right.id
+  }
+
   const direction = sortDirection.value === 'asc' ? 1 : -1
   let result = 0
   switch (sortKey.value) {
@@ -221,11 +226,19 @@ function compareText(left: string, right: string) {
 
 function sortBy(key: 'title' | 'username' | 'indexed') {
   if (sortKey.value === key) {
-    sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc'
-    return
+    // Same column clicked - cycle through states
+    if (sortDirection.value === 'asc') {
+      sortDirection.value = 'desc'
+    } else {
+      // Third click: reset to default order
+      sortKey.value = null
+      sortDirection.value = 'asc'
+    }
+  } else {
+    // Different column clicked - start fresh
+    sortKey.value = key
+    sortDirection.value = 'asc'
   }
-  sortKey.value = key
-  sortDirection.value = 'asc'
 }
 
 function sortIndicator(key: 'title' | 'username' | 'indexed') {
