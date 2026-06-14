@@ -32,10 +32,14 @@ const visibleItems = computed(() =>
 )
 
 const offsetY = computed(() => visibleStart.value * props.itemHeight)
+
+function handleScroll(event: Event) {
+  scrollTop.value = (event.target as HTMLElement).scrollTop
+}
 </script>
 
 <template>
-  <div class="virtual-scroller">
+  <div class="virtual-scroller" @scroll="handleScroll">
     <div
       class="virtual-content"
       :style="{
