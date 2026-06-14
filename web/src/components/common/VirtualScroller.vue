@@ -1,5 +1,5 @@
 <script setup lang="ts" generic="T">
-import { computed, ref, onUnmounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 
 interface Props<T> {
   items: T[]
@@ -11,6 +11,7 @@ const props = withDefaults(defineProps<Props<T>>(), {
   bufferSize: 5
 })
 
+const scrollerRef = ref<HTMLElement>()
 const scrollTop = ref(0)
 const containerHeight = ref(800) // Default, will measure on mount
 
@@ -50,10 +51,16 @@ onUnmounted(() => {
     clearTimeout(scrollTimer)
   }
 })
+
+onMounted(() => {
+  if (scrollerRef.value) {
+    containerHeight.value = scrollerRef.value.clientHeight
+  }
+})
 </script>
 
 <template>
-  <div class="virtual-scroller" @scroll="handleScroll">
+  <div ref="scrollerRef" class="virtual-scroller" @scroll="handleScroll">
     <div
       class="virtual-content"
       :style="{

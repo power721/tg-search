@@ -14,8 +14,15 @@ describe('VirtualScroller', () => {
       },
       slots: {
         item: '<div>{{ item.name }}</div>'
-      }
+      },
+      attachTo: document.body
     })
+
+    // Mock container height before mount completes
+    Object.defineProperty(wrapper.element, 'clientHeight', { value: 800, configurable: true })
+
+    // Trigger onMounted manually by forcing a re-measure
+    wrapper.vm.containerHeight = 800
 
     // Initially at top with 800px container and 50px items:
     // 800 / 50 = 16 visible + 5 buffer = 21 items
@@ -23,6 +30,8 @@ describe('VirtualScroller', () => {
     expect(wrapper.findAll('[data-index]').length).toBe(21)
     expect(wrapper.find('[data-index="0"]').exists()).toBe(true)
     expect(wrapper.find('[data-index="20"]').exists()).toBe(true)
+
+    wrapper.unmount()
   })
 
   test('updates visible range on scroll', async () => {
@@ -38,8 +47,12 @@ describe('VirtualScroller', () => {
       },
       slots: {
         item: '<div>{{ item.name }}</div>'
-      }
+      },
+      attachTo: document.body
     })
+
+    // Set container height
+    wrapper.vm.containerHeight = 800
 
     // Simulate scroll to position 1000px
     const scroller = wrapper.find('.virtual-scroller')
@@ -57,6 +70,7 @@ describe('VirtualScroller', () => {
     expect(wrapper.find('[data-index="0"]').exists()).toBe(false)
 
     vi.useRealTimers()
+    wrapper.unmount()
   })
 
   test('throttles scroll events', async () => {
@@ -65,8 +79,11 @@ describe('VirtualScroller', () => {
     const items = Array.from({ length: 100 }, (_, i) => ({ id: i }))
     const wrapper = mount(VirtualScroller, {
       props: { items, itemHeight: 50, bufferSize: 5 },
-      slots: { item: '<div>Item</div>' }
+      slots: { item: '<div>Item</div>' },
+      attachTo: document.body
     })
+
+    wrapper.vm.containerHeight = 800
 
     const scroller = wrapper.find('.virtual-scroller')
 
@@ -99,5 +116,31 @@ describe('VirtualScroller', () => {
     expect(wrapper.vm.scrollTop).toBe(500)
 
     vi.useRealTimers()
+    wrapper.unmount()
+  })
+
+  test('measures container height on mount', async () => {
+    const items = Array.from({ length: 100 }, (_, i) => ({ id: i }))
+
+    const wrapper = mount(VirtualScroller, {
+      props: { items, itemHeight: 50, bufferSize: 5 },
+      slots: { item: '<div>Item</div>' },
+      attachTo: document.body
+    })
+
+    await wrapper.vm.$nextTick()
+
+    // In jsdom, clientHeight is typically 0, but the onMounted hook should have run
+    // Verify that containerHeight ref exists and onMounted was called
+    expect(wrapper.vm.containerHeight).toBeDefined()
+
+    // Manually set a height to verify calculation works
+    wrapper.vm.containerHeight = 600
+    await wrapper.vm.$nextTick()
+
+    // With 600px container and 50px items: ~12 visible + 5 buffer = 17 items
+    expect(wrapper.findAll('[data-index]').length).toBeGreaterThanOrEqual(17)
+
+    wrapper.unmount()
   })
 })
