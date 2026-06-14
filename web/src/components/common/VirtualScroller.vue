@@ -1,5 +1,5 @@
 <script setup lang="ts" generic="T">
-import { computed, ref } from 'vue'
+import { computed, ref, onUnmounted } from 'vue'
 
 interface Props<T> {
   items: T[]
@@ -33,9 +33,23 @@ const visibleItems = computed(() =>
 
 const offsetY = computed(() => visibleStart.value * props.itemHeight)
 
+let scrollTimer: number | null = null
+
 function handleScroll(event: Event) {
-  scrollTop.value = (event.target as HTMLElement).scrollTop
+  if (scrollTimer !== null) return
+
+  const target = event.target as HTMLElement
+  scrollTimer = window.setTimeout(() => {
+    scrollTop.value = target.scrollTop
+    scrollTimer = null
+  }, 16) // ~60fps
 }
+
+onUnmounted(() => {
+  if (scrollTimer !== null) {
+    clearTimeout(scrollTimer)
+  }
+})
 </script>
 
 <template>
