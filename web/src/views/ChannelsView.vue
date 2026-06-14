@@ -4,7 +4,6 @@ import { useDialog } from 'naive-ui'
 import type { ListenRulesPayload, TelegramChannel, WatchRule } from '@/api/types'
 import Avatar from '@/components/common/Avatar.vue'
 import WebAccessBadge from '@/components/channels/WebAccessBadge.vue'
-import VirtualScroller from '@/components/common/VirtualScroller.vue'
 import { useChannelsStore } from '@/stores/channels'
 import { normalizePrivateChannelID } from '@/utils/telegramLinks'
 
@@ -538,16 +537,7 @@ async function useGlobalRule() {
               </div>
             </td>
           </tr>
-
-          <VirtualScroller
-            v-else-if="displayChannels.length > 0"
-            :items="displayChannels"
-            :item-height="60"
-            :buffer-size="5"
-            class="desktop-virtual-scroller"
-          >
-            <template #item="{ item: channel }">
-              <tr :key="channel.id">
+          <tr v-for="channel in displayChannels" :key="channel.id">
             <td>
               <Avatar
                 :id="channel.id"
@@ -639,10 +629,7 @@ async function useGlobalRule() {
               </n-button>
             </td>
           </tr>
-            </template>
-          </VirtualScroller>
-
-          <tr v-else>
+          <tr v-if="!channels.loading && displayChannels.length === 0">
             <td colspan="10">
               <div class="empty-state">
                 <strong>暂无频道</strong>
@@ -662,15 +649,7 @@ async function useGlobalRule() {
           </div>
         </div>
 
-        <VirtualScroller
-          v-else-if="displayChannels.length > 0"
-          :items="displayChannels"
-          :item-height="120"
-          :buffer-size="3"
-          class="mobile-virtual-scroller"
-        >
-          <template #item="{ item: channel }">
-            <div :key="channel.id" class="mobile-card">
+        <div v-for="channel in displayChannels" :key="channel.id" class="mobile-card">
           <div class="mobile-card-header">
             <Avatar
               :id="channel.id"
@@ -708,10 +687,7 @@ async function useGlobalRule() {
             <n-button size="small" type="error" :loading="clearingChannelIds.has(channel.id)" @click="confirmClearChannel(channel)">清空</n-button>
           </div>
         </div>
-          </template>
-        </VirtualScroller>
-
-        <div v-else class="empty-state">
+        <div v-if="!channels.loading && displayChannels.length === 0" class="empty-state">
           <strong>暂无频道</strong>
           <span>调整筛选条件，或刷新 Telegram 元数据。</span>
         </div>
@@ -983,21 +959,5 @@ table {
   .mobile-card {
     display: flex;
   }
-}
-
-.desktop-virtual-scroller {
-  display: block;
-  height: calc(100vh - 280px);
-  overflow-y: auto;
-}
-
-.desktop-virtual-scroller :deep(tr) {
-  display: table;
-  width: 100%;
-  table-layout: fixed;
-}
-
-.mobile-virtual-scroller {
-  height: calc(100vh - 200px);
 }
 </style>
