@@ -661,7 +661,16 @@ async function useGlobalRule() {
             <span class="skeleton-line short" />
           </div>
         </div>
-        <div v-for="channel in displayChannels" :key="channel.id" class="mobile-card">
+
+        <VirtualScroller
+          v-else-if="displayChannels.length > 0"
+          :items="displayChannels"
+          :item-height="120"
+          :buffer-size="3"
+          class="mobile-virtual-scroller"
+        >
+          <template #item="{ item: channel }">
+            <div :key="channel.id" class="mobile-card">
           <div class="mobile-card-header">
             <Avatar
               :id="channel.id"
@@ -699,7 +708,10 @@ async function useGlobalRule() {
             <n-button size="small" type="error" :loading="clearingChannelIds.has(channel.id)" @click="confirmClearChannel(channel)">清空</n-button>
           </div>
         </div>
-        <div v-if="!channels.loading && displayChannels.length === 0" class="empty-state">
+          </template>
+        </VirtualScroller>
+
+        <div v-else class="empty-state">
           <strong>暂无频道</strong>
           <span>调整筛选条件，或刷新 Telegram 元数据。</span>
         </div>
@@ -983,5 +995,9 @@ table {
   display: table;
   width: 100%;
   table-layout: fixed;
+}
+
+.mobile-virtual-scroller {
+  height: calc(100vh - 200px);
 }
 </style>
