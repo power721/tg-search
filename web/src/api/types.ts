@@ -205,6 +205,7 @@ export interface TelegramLoginResponse {
   metadata_sync?: {
     status: string
     channel_count: number
+    job_id?: string
     error?: string
   }
 }
@@ -399,6 +400,16 @@ export interface Task {
 export interface TasksResponse {
   items: Task[]
   total: number
+}
+
+export interface RetryJob {
+  id: string
+  name: string
+  status: string
+  attempts: number
+  error?: string
+  created_at: string
+  updated_at: string
 }
 
 export interface RuntimeEvent<T = unknown> {

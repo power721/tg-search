@@ -968,6 +968,24 @@ func (h handlers) tasks(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": localizeTasks(items), "total": total})
 }
 
+func (h handlers) retryJob(c *gin.Context) {
+	if h.deps.SyncQueue == nil {
+		errorText(c, http.StatusServiceUnavailable, "sync queue is unavailable")
+		return
+	}
+	id := c.Param("id")
+	if id == "" {
+		errorText(c, http.StatusBadRequest, "id is required")
+		return
+	}
+	job, ok := h.deps.SyncQueue.Snapshot(id)
+	if !ok {
+		errorText(c, http.StatusNotFound, "job not found")
+		return
+	}
+	c.JSON(http.StatusOK, job)
+}
+
 func (h handlers) logs(c *gin.Context) {
 	viewer, ok := h.logViewer(c)
 	if !ok {

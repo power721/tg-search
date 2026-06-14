@@ -161,6 +161,7 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	adminOnly.GET("/tasks", h.tasks)
 	adminOnly.POST("/tasks/bulk-delete", h.bulkDeleteTasks)
 	adminOnly.GET("/tasks/:id", h.task)
+	adminOnly.GET("/jobs/:id", h.retryJob)
 	adminOnly.DELETE("/tasks/:id", h.deleteTask)
 	adminOnly.POST("/tasks/:id/retry", h.retryTask)
 	adminOnly.POST("/tasks/:id/cancel", h.cancelTask)

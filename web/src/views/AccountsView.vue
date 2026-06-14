@@ -39,6 +39,10 @@ const metadataText = computed(() => {
   if (!sync) return ''
   if (sync.status === 'succeeded') return `元数据同步成功：${sync.channel_count} 个频道`
   if (sync.status === 'failed') return `元数据同步失败：${sync.error ?? '未知错误'}`
+  if (sync.status === 'queued') {
+    const jobId = sync.job_id ? ` (任务 #${sync.job_id})` : ''
+    return `正在后台同步频道元数据${jobId}，请稍候...`
+  }
   return `元数据同步状态：${sync.status}`
 })
 
