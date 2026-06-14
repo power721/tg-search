@@ -143,4 +143,31 @@ describe('VirtualScroller', () => {
 
     wrapper.unmount()
   })
+
+  test('handles empty list', () => {
+    const wrapper = mount(VirtualScroller, {
+      props: { items: [], itemHeight: 50 },
+      slots: { item: '<div>Item</div>' }
+    })
+
+    expect(wrapper.findAll('[data-index]').length).toBe(0)
+    expect(wrapper.find('.virtual-content').attributes('style')).toContain('height: 0px')
+  })
+
+  test('handles small list that fits in viewport', () => {
+    const items = Array.from({ length: 3 }, (_, i) => ({ id: i }))
+
+    const wrapper = mount(VirtualScroller, {
+      props: { items, itemHeight: 50, bufferSize: 5 },
+      slots: { item: '<div>Item</div>' },
+      attachTo: document.body
+    })
+
+    wrapper.vm.containerHeight = 800
+
+    // All 3 items should render
+    expect(wrapper.findAll('[data-index]').length).toBe(3)
+
+    wrapper.unmount()
+  })
 })
