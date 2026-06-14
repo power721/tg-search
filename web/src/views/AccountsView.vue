@@ -273,19 +273,26 @@ async function syncAccountChannels(account: TelegramAccount) {
   syncingAccountIds.value = next
   try {
     const response = await telegram.syncAccountChannels(account.id)
-    // Check if response contains job_id (async task)
-    if (response && typeof response === 'object' && 'job_id' in response && 'status' in response) {
-      const jobId = (response as { job_id: string; status: string }).job_id
-      const status = (response as { job_id: string; status: string }).status
-      if (status === 'queued' || status === 'running') {
-        message.info(`${account.phone} 正在后台同步频道 (任务 #${jobId})，请稍候...`)
-      } else if (status === 'succeeded') {
-        message.success(`${account.phone} 频道同步完成`)
+    // Check response type: task_id (database task) or job_id (retry queue) or items (sync)
+    if (response && typeof response === 'object') {
+      if ('task_id' in response) {
+        const taskId = (response as { task_id: number; status: string }).task_id
+        message.success(`${account.phone} 频道同步任务已创建 (任务 #${taskId})，可在任务列表中查看进度`)
+      } else if ('job_id' in response && 'status' in response) {
+        const jobId = (response as { job_id: string; status: string }).job_id
+        const status = (response as { job_id: string; status: string }).status
+        if (status === 'queued' || status === 'running') {
+          message.info(`${account.phone} 正在后台同步频道 (任务 #${jobId})，请稍候...`)
+        } else if (status === 'succeeded') {
+          message.success(`${account.phone} 频道同步完成`)
+        } else {
+          message.warning(`${account.phone} 频道同步状态：${status}`)
+        }
       } else {
-        message.warning(`${account.phone} 频道同步状态：${status}`)
+        // Sync response (no task_id/job_id means it was completed synchronously)
+        message.success(`${account.phone} 频道同步完成`)
       }
     } else {
-      // Sync response (no job_id means it was completed synchronously)
       message.success(`${account.phone} 频道同步完成`)
     }
   } catch {

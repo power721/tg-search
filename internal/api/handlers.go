@@ -2238,6 +2238,56 @@ func (h handlers) syncAccountChannels(c *gin.Context) {
 		errorJSON(c, http.StatusNotFound, err)
 		return
 	}
+
+	// Create a database task for better tracking and progress visibility
+	if h.deps.Tasks != nil && h.deps.TaskRepository != nil {
+		task, err := h.deps.TaskRepository.Create(c.Request.Context(), model.Task{
+			Type:    model.TaskTypeMetadataSync,
+			Status:  model.TaskStatusQueued,
+			Message: fmt.Sprintf("同步账号 %s 的频道元数据", account.Phone),
+		})
+		if err != nil {
+			errorJSON(c, http.StatusInternalServerError, err)
+			return
+		}
+
+		// Enqueue the task execution
+		go func() {
+			ctx := context.Background()
+			startTime := time.Now()
+			_ = h.deps.TaskRepository.UpdateStatus(ctx, task.ID, model.TaskStatusRunning, taskpkg.StatusUpdate{
+				StartedAt: &startTime,
+			})
+
+			progress := taskpkg.NewProgressSink(h.deps.Tasks, task.ID)
+
+			items, err := h.deps.ChannelSync.SyncAccountWithProgress(ctx, account, progress)
+			if err != nil {
+				finishTime := time.Now()
+				_ = h.deps.TaskRepository.UpdateStatus(ctx, task.ID, model.TaskStatusFailed, taskpkg.StatusUpdate{
+					ErrorMessage: err.Error(),
+					FinishedAt:   &finishTime,
+				})
+				return
+			}
+
+			// Enqueue avatar downloads if AvatarService is available
+			if h.deps.AvatarService != nil {
+				h.deps.AvatarService.EnqueueChannelAvatars(ctx, account, items)
+			}
+
+			finishTime := time.Now()
+			_ = h.deps.TaskRepository.UpdateStatus(ctx, task.ID, model.TaskStatusSucceeded, taskpkg.StatusUpdate{
+				Message:    fmt.Sprintf("已同步 %d 个频道", len(items)),
+				FinishedAt: &finishTime,
+			})
+		}()
+
+		c.JSON(http.StatusAccepted, gin.H{"task_id": task.ID, "status": task.Status})
+		return
+	}
+
+	// Fallback to RetryQueue if TaskRepository is not available
 	if h.deps.SyncQueue != nil {
 		jobCtx := context.WithoutCancel(c.Request.Context())
 		job := h.deps.SyncQueue.Enqueue(jobCtx, "account-channels-sync", func(ctx context.Context) error {
@@ -2247,6 +2297,8 @@ func (h handlers) syncAccountChannels(c *gin.Context) {
 		c.JSON(http.StatusAccepted, gin.H{"job_id": job.ID, "status": job.Status})
 		return
 	}
+
+	// Fallback to synchronous execution
 	items, err := h.deps.ChannelSync.SyncAccount(c.Request.Context(), account)
 	if err != nil {
 		errorJSON(c, http.StatusInternalServerError, err)
