@@ -4,6 +4,7 @@ import { useDialog } from 'naive-ui'
 import type { ListenRulesPayload, TelegramChannel, WatchRule } from '@/api/types'
 import Avatar from '@/components/common/Avatar.vue'
 import WebAccessBadge from '@/components/channels/WebAccessBadge.vue'
+import VirtualScroller from '@/components/common/VirtualScroller.vue'
 import { useChannelsStore } from '@/stores/channels'
 import { normalizePrivateChannelID } from '@/utils/telegramLinks'
 
@@ -537,7 +538,16 @@ async function useGlobalRule() {
               </div>
             </td>
           </tr>
-          <tr v-for="channel in displayChannels" :key="channel.id">
+
+          <VirtualScroller
+            v-else-if="displayChannels.length > 0"
+            :items="displayChannels"
+            :item-height="60"
+            :buffer-size="5"
+            class="desktop-virtual-scroller"
+          >
+            <template #item="{ item: channel }">
+              <tr :key="channel.id">
             <td>
               <Avatar
                 :id="channel.id"
@@ -629,7 +639,10 @@ async function useGlobalRule() {
               </n-button>
             </td>
           </tr>
-          <tr v-if="!channels.loading && displayChannels.length === 0">
+            </template>
+          </VirtualScroller>
+
+          <tr v-else>
             <td colspan="10">
               <div class="empty-state">
                 <strong>暂无频道</strong>
@@ -958,5 +971,17 @@ table {
   .mobile-card {
     display: flex;
   }
+}
+
+.desktop-virtual-scroller {
+  display: block;
+  height: calc(100vh - 280px);
+  overflow-y: auto;
+}
+
+.desktop-virtual-scroller :deep(tr) {
+  display: table;
+  width: 100%;
+  table-layout: fixed;
 }
 </style>
