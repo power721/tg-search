@@ -30,6 +30,7 @@ const batchCheckingWebAccess = ref(false)
 const ruleLoading = ref(false)
 const ruleSaving = ref(false)
 const channelRuleId = ref<number | null>(null)
+const displayLimit = ref(50)
 const canConfirmSync = computed(() => Number.isInteger(syncMaxMessages.value) && Number(syncMaxMessages.value) > 0)
 
 const defaultMessageTypes = ['link', 'text', 'image', 'video', 'audio']
@@ -110,12 +111,12 @@ const filteredChannels = computed(() => {
 })
 const displayChannels = computed(() => {
   // User hasn't clicked any column header — use backend's default order
-  if (sortKey.value === null) {
-    return filteredChannels.value
-  }
+  const channels = sortKey.value === null
+    ? filteredChannels.value
+    : [...filteredChannels.value].sort(compareChannels)
 
-  // User clicked a column header — sort accordingly
-  return [...filteredChannels.value].sort(compareChannels)
+  // Limit initial render to improve performance
+  return channels.slice(0, displayLimit.value)
 })
 const visibleWebCheckChannelIds = computed(() =>
   filteredChannels.value
@@ -127,6 +128,17 @@ const visibleWebCheckChannelIds = computed(() =>
 
 onMounted(() => {
   void channels.loadChannels()
+})
+
+function loadMore() {
+  displayLimit.value += 50
+}
+
+const hasMore = computed(() => {
+  const total = sortKey.value === null
+    ? filteredChannels.value.length
+    : filteredChannels.value.length
+  return displayLimit.value < total
 })
 
 function username(channel: TelegramChannel) {
@@ -640,6 +652,12 @@ async function useGlobalRule() {
         </tbody>
       </table>
 
+      <div v-if="hasMore && !channels.loading" class="load-more-container">
+        <n-button @click="loadMore">
+          加载更多 (显示 {{ displayLimit }} / {{ filteredChannels.length }})
+        </n-button>
+      </div>
+
       <div class="mobile-cards">
         <div v-if="channels.loading && channels.items.length === 0" class="mobile-loading">
           <div class="loading-stack" aria-label="正在加载频道">
@@ -690,6 +708,12 @@ async function useGlobalRule() {
         <div v-if="!channels.loading && displayChannels.length === 0" class="empty-state">
           <strong>暂无频道</strong>
           <span>调整筛选条件，或刷新 Telegram 元数据。</span>
+        </div>
+
+        <div v-if="hasMore && !channels.loading" class="load-more-container mobile">
+          <n-button @click="loadMore">
+            加载更多 (显示 {{ displayLimit }} / {{ filteredChannels.length }})
+          </n-button>
         </div>
       </div>
     </div>
@@ -959,5 +983,16 @@ table {
   .mobile-card {
     display: flex;
   }
+}
+
+.load-more-container {
+  display: flex;
+  justify-content: center;
+  padding: 20px;
+  margin-top: 10px;
+}
+
+.load-more-container.mobile {
+  margin-top: 0;
 }
 </style>
