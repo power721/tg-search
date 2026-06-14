@@ -118,7 +118,13 @@ func (s *Service) EnqueueChannelAvatar(ctx context.Context, account model.Accoun
 }
 
 func (s *Service) downloadChannelAvatar(ctx context.Context, account model.Account, channel model.Channel, destPath string) error {
+	s.logger.Info("starting channel avatar download",
+		zap.Int64("channel_id", channel.ID),
+		zap.Int64("photo_id", channel.PhotoID),
+		zap.String("path", destPath))
+
 	if FileExists(destPath) {
+		s.logger.Info("channel avatar file already exists, skipping", zap.String("path", destPath))
 		return nil
 	}
 
@@ -129,13 +135,23 @@ func (s *Service) downloadChannelAvatar(ctx context.Context, account model.Accou
 	}
 
 	downloadFn := func() error {
+		s.logger.Info("downloading channel avatar from telegram",
+			zap.Int64("channel_id", channel.TelegramChannelID),
+			zap.Int64("photo_id", channel.PhotoID))
+
 		img, err := s.telegram.DownloadChannelAvatar(ctx, session, channel.TelegramChannelID, channel.AccessHash, channel.PhotoID)
 		if err != nil {
+			s.logger.Error("failed to download channel avatar", zap.Error(err),
+				zap.Int64("channel_id", channel.ID),
+				zap.Int64("photo_id", channel.PhotoID))
 			return fmt.Errorf("download channel avatar: %w", err)
 		}
+		s.logger.Info("writing channel avatar file", zap.String("path", destPath), zap.Int("size", len(img.Data)))
 		if err := WriteAvatarFile(destPath, img.Data); err != nil {
+			s.logger.Error("failed to write avatar file", zap.Error(err), zap.String("path", destPath))
 			return fmt.Errorf("write avatar file: %w", err)
 		}
+		s.logger.Info("channel avatar downloaded successfully", zap.String("path", destPath))
 		return nil
 	}
 
