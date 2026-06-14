@@ -272,8 +272,22 @@ async function syncAccountChannels(account: TelegramAccount) {
   next.add(account.id)
   syncingAccountIds.value = next
   try {
-    await telegram.syncAccountChannels(account.id)
-    message.success(`${account.phone} 频道同步完成`)
+    const response = await telegram.syncAccountChannels(account.id)
+    // Check if response contains job_id (async task)
+    if (response && typeof response === 'object' && 'job_id' in response && 'status' in response) {
+      const jobId = (response as { job_id: string; status: string }).job_id
+      const status = (response as { job_id: string; status: string }).status
+      if (status === 'queued' || status === 'running') {
+        message.info(`${account.phone} 正在后台同步频道 (任务 #${jobId})，请稍候...`)
+      } else if (status === 'succeeded') {
+        message.success(`${account.phone} 频道同步完成`)
+      } else {
+        message.warning(`${account.phone} 频道同步状态：${status}`)
+      }
+    } else {
+      // Sync response (no job_id means it was completed synchronously)
+      message.success(`${account.phone} 频道同步完成`)
+    }
   } catch {
     message.error(`${account.phone} 频道同步失败`)
   } finally {

@@ -127,8 +127,9 @@ export const useTelegramStore = defineStore('telegram', {
     },
     async syncAccountChannels(id: number) {
       return this.withLoading(async () => {
-        await apiPost(`/api/accounts/${id}/channels/sync-metadata`)
+        const response = await apiPost<{ job_id?: string; status?: string; items?: unknown[] }>(`/api/accounts/${id}/channels/sync-metadata`)
         await this.loadAccounts()
+        return response
       })
     },
     async syncAccountAvatar(id: number) {
