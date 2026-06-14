@@ -152,9 +152,12 @@ func channelFromTG(channel *tg.Channel) Channel {
 	}
 	avatarState := "none"
 	var photoID int64
-	if photo, ok := channel.Photo.(*tg.ChatPhoto); ok {
-		photoID = photo.PhotoID
-		avatarState = "available"
+	// Use AsNotEmpty() for safer photo extraction, but check for nil first
+	if channel.Photo != nil {
+		if photo, ok := channel.Photo.AsNotEmpty(); ok && photo.PhotoID > 0 {
+			photoID = photo.PhotoID
+			avatarState = "available"
+		}
 	}
 	return Channel{
 		TelegramChannelID: channel.ID,
@@ -183,9 +186,12 @@ func (g *GotdClient) enrichChannels(ctx context.Context, api *tg.Client, channel
 		// Extract photo from the updated Chat objects returned alongside FullChat
 		for _, chat := range full.Chats {
 			if ch, ok := chat.(*tg.Channel); ok && ch.ID == channels[i].TelegramChannelID {
-				if photo, ok := ch.Photo.(*tg.ChatPhoto); ok {
-					channels[i].PhotoID = photo.PhotoID
-					channels[i].AvatarState = "available"
+				// Use AsNotEmpty() for safer photo extraction, but check for nil first
+				if ch.Photo != nil {
+					if photo, ok := ch.Photo.AsNotEmpty(); ok && photo.PhotoID > 0 {
+						channels[i].PhotoID = photo.PhotoID
+						channels[i].AvatarState = "available"
+					}
 				}
 				break
 			}

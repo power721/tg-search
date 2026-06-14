@@ -47,6 +47,72 @@ func TestListDialogChannelsCollectsAllDialogPages(t *testing.T) {
 	}
 }
 
+func TestChannelFromTGExtractsPhotoID(t *testing.T) {
+	tests := []struct {
+		name            string
+		channel         *tg.Channel
+		wantPhotoID     int64
+		wantAvatarState string
+	}{
+		{
+			name: "channel with photo",
+			channel: &tg.Channel{
+				ID:         123456,
+				AccessHash: 789012,
+				Title:      "Test Channel",
+				Photo:      &tg.ChatPhoto{PhotoID: 987654321},
+			},
+			wantPhotoID:     987654321,
+			wantAvatarState: "available",
+		},
+		{
+			name: "channel with empty photo",
+			channel: &tg.Channel{
+				ID:         123457,
+				AccessHash: 789013,
+				Title:      "Empty Photo Channel",
+				Photo:      &tg.ChatPhotoEmpty{},
+			},
+			wantPhotoID:     0,
+			wantAvatarState: "none",
+		},
+		{
+			name: "channel with nil photo",
+			channel: &tg.Channel{
+				ID:         123458,
+				AccessHash: 789014,
+				Title:      "No Photo Channel",
+				Photo:      nil,
+			},
+			wantPhotoID:     0,
+			wantAvatarState: "none",
+		},
+		{
+			name: "channel with zero photoID",
+			channel: &tg.Channel{
+				ID:         123459,
+				AccessHash: 789015,
+				Title:      "Zero PhotoID Channel",
+				Photo:      &tg.ChatPhoto{PhotoID: 0},
+			},
+			wantPhotoID:     0,
+			wantAvatarState: "none",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := channelFromTG(tt.channel)
+			if result.PhotoID != tt.wantPhotoID {
+				t.Errorf("PhotoID = %d, want %d", result.PhotoID, tt.wantPhotoID)
+			}
+			if result.AvatarState != tt.wantAvatarState {
+				t.Errorf("AvatarState = %q, want %q", result.AvatarState, tt.wantAvatarState)
+			}
+		})
+	}
+}
+
 func TestApplyFullChannelMetadata(t *testing.T) {
 	channel := Channel{
 		TelegramChannelID: 1001,
