@@ -107,7 +107,15 @@ const filteredChannels = computed(() => {
       if (webAccessFilter.value && webAccessState(channel) !== webAccessFilter.value) return false
       return true
     })
-    .sort(compareChannels)
+})
+const displayChannels = computed(() => {
+  // User hasn't clicked any column header — use backend's default order
+  if (sortKey.value === null) {
+    return filteredChannels.value
+  }
+
+  // User clicked a column header — sort accordingly
+  return [...filteredChannels.value].sort(compareChannels)
 })
 const visibleWebCheckChannelIds = computed(() =>
   filteredChannels.value
@@ -529,7 +537,7 @@ async function useGlobalRule() {
               </div>
             </td>
           </tr>
-          <tr v-for="channel in filteredChannels" :key="channel.id">
+          <tr v-for="channel in displayChannels" :key="channel.id">
             <td>
               <Avatar
                 :id="channel.id"
@@ -621,7 +629,7 @@ async function useGlobalRule() {
               </n-button>
             </td>
           </tr>
-          <tr v-if="!channels.loading && filteredChannels.length === 0">
+          <tr v-if="!channels.loading && displayChannels.length === 0">
             <td colspan="10">
               <div class="empty-state">
                 <strong>暂无频道</strong>
@@ -640,7 +648,7 @@ async function useGlobalRule() {
             <span class="skeleton-line short" />
           </div>
         </div>
-        <div v-for="channel in filteredChannels" :key="channel.id" class="mobile-card">
+        <div v-for="channel in displayChannels" :key="channel.id" class="mobile-card">
           <div class="mobile-card-header">
             <Avatar
               :id="channel.id"
@@ -678,7 +686,7 @@ async function useGlobalRule() {
             <n-button size="small" type="error" :loading="clearingChannelIds.has(channel.id)" @click="confirmClearChannel(channel)">清空</n-button>
           </div>
         </div>
-        <div v-if="!channels.loading && filteredChannels.length === 0" class="empty-state">
+        <div v-if="!channels.loading && displayChannels.length === 0" class="empty-state">
           <strong>暂无频道</strong>
           <span>调整筛选条件，或刷新 Telegram 元数据。</span>
         </div>
