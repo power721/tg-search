@@ -172,31 +172,58 @@ func channelFromTG(channel *tg.Channel) Channel {
 }
 
 func (g *GotdClient) enrichChannels(ctx context.Context, api *tg.Client, channels []Channel) []Channel {
-	for i := range channels {
-		full, err := api.ChannelsGetFullChannel(ctx, inputChannel(channels[i]))
-		if err != nil {
-			g.logger.Debug("failed to load full channel metadata", zap.Error(err))
-			continue
-		}
-		channelFull, ok := full.FullChat.(*tg.ChannelFull)
-		if !ok {
-			continue
-		}
-		channels[i] = applyFullChannelMetadata(channels[i], channelFull)
-		// Extract photo from the updated Chat objects returned alongside FullChat
-		for _, chat := range full.Chats {
-			if ch, ok := chat.(*tg.Channel); ok && ch.ID == channels[i].TelegramChannelID {
-				// Use AsNotEmpty() for safer photo extraction, but check for nil first
-				if ch.Photo != nil {
-					if photo, ok := ch.Photo.AsNotEmpty(); ok && photo.PhotoID > 0 {
-						channels[i].PhotoID = photo.PhotoID
-						channels[i].AvatarState = "available"
-					}
-				}
-				break
-			}
-		}
+	// Use a worker pool to fetch channel details concurrently
+	// Limit concurrency to avoid rate limits
+	const maxConcurrent = 5
+	semaphore := make(chan struct{}, maxConcurrent)
+
+	type result struct {
+		index   int
+		channel Channel
 	}
+	results := make(chan result, len(channels))
+
+	for i := range channels {
+		go func(i int) {
+			semaphore <- struct{}{} // Acquire
+			defer func() { <-semaphore }() // Release
+
+			full, err := api.ChannelsGetFullChannel(ctx, inputChannel(channels[i]))
+			if err != nil {
+				g.logger.Debug("failed to load full channel metadata", zap.Error(err))
+				results <- result{index: i, channel: channels[i]}
+				return
+			}
+			channelFull, ok := full.FullChat.(*tg.ChannelFull)
+			if !ok {
+				results <- result{index: i, channel: channels[i]}
+				return
+			}
+			updated := applyFullChannelMetadata(channels[i], channelFull)
+			// Extract photo from the updated Chat objects returned alongside FullChat
+			for _, chat := range full.Chats {
+				if ch, ok := chat.(*tg.Channel); ok && ch.ID == channels[i].TelegramChannelID {
+					// Use AsNotEmpty() for safer photo extraction, but check for nil first
+					if ch.Photo != nil {
+						if photo, ok := ch.Photo.AsNotEmpty(); ok && photo.PhotoID > 0 {
+							updated.PhotoID = photo.PhotoID
+							updated.AvatarState = "available"
+						}
+					}
+					break
+				}
+			}
+			results <- result{index: i, channel: updated}
+		}(i)
+	}
+
+	// Collect results
+	for i := 0; i < len(channels); i++ {
+		res := <-results
+		channels[res.index] = res.channel
+	}
+	close(results)
+
 	return channels
 }
 
