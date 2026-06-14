@@ -5569,9 +5569,6 @@ func TestBatchSyncAPIEnqueuesHistorySyncTask(t *testing.T) {
 func TestAccountChannelSyncAPIReturnsAsyncJob(t *testing.T) {
 	ctx := context.Background()
 	deps := testDeps(t)
-	deps.SyncQueue = scheduler.NewRetryQueue(scheduler.RetryQueueOptions{
-		Policy: retry.Policy{BaseDelay: time.Millisecond, MaxDelay: time.Millisecond, MaxTries: 1, Sleep: func(context.Context, time.Duration) error { return nil }},
-	})
 	accountID, _ := deps.Accounts.Save(ctx, model.Account{Phone: "+10000000000", Status: model.AccountStatusOnline})
 	channelClient := &apiChannelClient{
 		items: []telegram.Channel{{TelegramChannelID: 11, AccessHash: 22, Title: "Account Channel", Type: model.ChannelTypeChannel}},
@@ -5587,22 +5584,39 @@ func TestAccountChannelSyncAPIReturnsAsyncJob(t *testing.T) {
 		t.Fatalf("status = %d body=%s, want 202", w.Code, w.Body.String())
 	}
 	var body struct {
-		JobID  string `json:"job_id"`
+		TaskID int64  `json:"task_id"`
 		Status string `json:"status"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
-	if body.JobID == "" || body.Status != "queued" {
-		t.Fatalf("response = %+v, want queued job id", body)
+	if body.TaskID == 0 || body.Status != model.TaskStatusQueued {
+		t.Fatalf("response = %+v, want queued task", body)
 	}
-	done, err := deps.SyncQueue.Wait(ctx, body.JobID)
-	if err != nil {
-		t.Fatalf("wait job: %v", err)
+
+	// Wait for task completion (poll since task execution is async via goroutine)
+	timeout := time.After(5 * time.Second)
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-timeout:
+			t.Fatal("task did not complete within timeout")
+		case <-tick.C:
+			task, err := deps.TaskRepository.FindByID(ctx, body.TaskID)
+			if err != nil {
+				t.Fatalf("find task: %v", err)
+			}
+			if task.Status == model.TaskStatusSucceeded {
+				goto taskDone
+			}
+			if task.Status == model.TaskStatusFailed {
+				t.Fatalf("task failed: %s", task.ErrorMessage)
+			}
+		}
 	}
-	if done.Status != scheduler.RetryJobSucceeded {
-		t.Fatalf("job status = %q error=%s, want succeeded", done.Status, done.Error)
-	}
+taskDone:
+
 	items, err := deps.Channels.FindByAccountID(ctx, accountID)
 	if err != nil {
 		t.Fatalf("find channels: %v", err)
