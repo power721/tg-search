@@ -2273,7 +2273,11 @@ func (h handlers) syncAccountChannels(c *gin.Context) {
 
 			// Enqueue avatar downloads if AvatarService is available
 			if h.deps.AvatarService != nil {
-				h.deps.AvatarService.EnqueueChannelAvatars(ctx, account, items)
+				jobs := h.deps.AvatarService.EnqueueChannelAvatars(ctx, account, items)
+				h.deps.Logger.Info("enqueued channel avatar downloads",
+					zap.Int("channel_count", len(items)),
+					zap.Int("job_count", len(jobs)),
+					zap.Int64("account_id", account.ID))
 			}
 
 			finishTime := time.Now()

@@ -97,17 +97,21 @@ func (s *Service) downloadAccountAvatar(ctx context.Context, account model.Accou
 // Skips if PhotoID is 0 or file already exists.
 func (s *Service) EnqueueChannelAvatar(ctx context.Context, account model.Account, channel model.Channel) scheduler.RetryJob {
 	if channel.PhotoID <= 0 {
+		s.logger.Debug("skipping channel avatar: no photo_id", zap.Int64("channel_id", channel.ID))
 		return scheduler.RetryJob{}
 	}
 	path := AvatarAbsolutePath(s.storageRoot, "channel", channel.ID, channel.PhotoID)
 	if FileExists(path) {
+		s.logger.Debug("skipping channel avatar: file exists", zap.Int64("channel_id", channel.ID), zap.String("path", path))
 		return scheduler.RetryJob{}
 	}
 	if s.queue == nil {
+		s.logger.Warn("skipping channel avatar: queue is nil", zap.Int64("channel_id", channel.ID))
 		return scheduler.RetryJob{}
 	}
 
 	name := fmt.Sprintf("avatar-channel-%d-%d", channel.ID, channel.PhotoID)
+	s.logger.Info("enqueuing channel avatar download", zap.Int64("channel_id", channel.ID), zap.Int64("photo_id", channel.PhotoID), zap.String("path", path))
 	return s.queue.Enqueue(ctx, name, func(ctx context.Context) error {
 		return s.downloadChannelAvatar(ctx, account, channel, path)
 	})
