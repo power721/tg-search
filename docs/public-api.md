@@ -9,6 +9,7 @@
 ```text
 GET  /api/search
 POST /api/search
+POST /api/check/links
 GET  /feeds/latest
 GET  /feeds/search
 GET  /feeds/saved/:id
@@ -120,7 +121,88 @@ curl "http://127.0.0.1:9900/api/search" \
 
 无论哪种类型，都会返回 `total`。
 
-## 6. RSS Feed
+## 6. 链接有效性检测接口
+
+`POST /api/check/links` 用于在外部系统完成搜索后，按需检测网盘分享链接是否仍然可用。接口使用同一套 API Key 认证。
+
+请求示例：
+
+```bash
+curl "http://127.0.0.1:9900/api/check/links" \
+  -H "X-API-Key: $TG_SEARCH_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "timeout": 5,
+    "items": [
+      {
+        "disk_type": "quark",
+        "url": "https://pan.quark.cn/s/xxxx",
+        "password": "abcd"
+      },
+      {
+        "disk_type": "aliyun",
+        "url": "https://www.alipan.com/s/yyyy"
+      }
+    ]
+  }'
+```
+
+请求参数：
+
+| 参数 | 说明 |
+| --- | --- |
+| `items` | 待检测链接数组，必填。 |
+| `items[].disk_type` | 网盘类型，例如 `quark`、`aliyun`、`baidu`、`tianyi`、`xunlei`、`115`、`123`、`uc`、`mobile`。 |
+| `items[].url` | 完整分享链接。 |
+| `items[].password` | 提取码，未包含在链接里时可传。 |
+| `timeout` | 整次检测超时时间，单位秒，默认 5。 |
+| `timeout_ms` | 整次检测超时时间，单位毫秒；同时传入时优先于 `timeout`。 |
+
+检测会按 `disk_type` 分组，同类型链接每 10 个拆成一个检测批次，最多同时执行 5 个批次。例如 100 个夸克链接会拆成 10 个批次并以 5 批并发处理。达到超时时间后，服务不会继续等待未完成检测；未完成的链接会以 `uncertain` 返回。
+
+成功响应：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "timeout_ms": 5000,
+    "results": [
+      {
+        "disk_type": "quark",
+        "url": "https://pan.quark.cn/s/xxxx",
+        "password": "abcd",
+        "state": "ok",
+        "summary": "链接有效"
+      }
+    ],
+    "grouped": {
+      "quark": [
+        {
+          "disk_type": "quark",
+          "url": "https://pan.quark.cn/s/xxxx",
+          "password": "abcd",
+          "state": "ok",
+          "summary": "链接有效"
+        }
+      ]
+    }
+  }
+}
+```
+
+状态说明：
+
+| 状态 | 说明 |
+| --- | --- |
+| `ok` | 链接有效。 |
+| `bad` | 链接失效、过期、删除或被取消。 |
+| `locked` | 需要提取码，或提取码错误/缺失。 |
+| `unsupported` | 当前网盘类型暂不支持检测。 |
+| `uncertain` | 请求失败、超时或无法确认状态。 |
+
+## 7. RSS Feed
 
 RSS Feed 返回已经索引的本地资源，适合接入支持自定义 Header 的 RSS Reader 或自动化系统。
 
@@ -145,7 +227,7 @@ curl -H "X-API-Key: $TG_SEARCH_API_KEY" \
 | `cloud_types` | 资源类型过滤，逗号分隔。 |
 | `limit` | 数量，默认 50，最大 100。 |
 
-## 7. 成功响应
+## 8. 成功响应
 
 公开 API 使用兼容封装：
 
@@ -232,7 +314,7 @@ curl -H "X-API-Key: $TG_SEARCH_API_KEY" \
 | `images` | 图片代理 URL，仅 `include_image=true` 时返回。 |
 | `media` | 媒体元数据，仅 `include_media_metadata=true` 且有数据时返回。 |
 
-## 8. 资源类型过滤
+## 9. 资源类型过滤
 
 `cloud_types` 为空时默认搜索：
 
@@ -297,7 +379,7 @@ jianguoyun
 /api/search?kw=剧集&cloud_types=quark,aliyun,magnet
 ```
 
-## 9. 媒体 URL
+## 10. 媒体 URL
 
 当结果中有 Telegram 图片或视频时，公开 API 返回的 URL 会自动签名：
 
@@ -324,7 +406,7 @@ curl -I \
   "http://127.0.0.1:9900/v/456?exp=1780912800&sig=..."
 ```
 
-## 10. 错误响应
+## 11. 错误响应
 
 公开 API 错误仍使用 `code/message` 封装，HTTP 状态码表示错误类型：
 
@@ -347,7 +429,7 @@ curl -I \
 | `401` | `invalid api key` | API Key 无效或已被重新生成。 |
 | `503` | `resources are unavailable` | 资源服务不可用。 |
 
-## 11. 集成建议
+## 12. 集成建议
 
 - 后端服务保存 API Key，不要把 API Key 暴露给不可信前端。
 - 用 `res=merge` 获取按类型聚合的链接，适合资源站、机器人和插件。
@@ -356,7 +438,7 @@ curl -I \
 - `limit` 最大为 `3000`，外部系统建议分页拉取。
 - 媒体 URL 过期后不要重试旧 URL，重新搜索获取新签名。
 
-## 12. 最小调用示例
+## 13. 最小调用示例
 
 Node.js：
 
