@@ -3,7 +3,6 @@ package linkcheck
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -16,13 +15,13 @@ const (
 	StateUnsupported = "unsupported"
 	StateUncertain   = "uncertain"
 
-	DefaultTimeout = 5 * time.Second
-	MaxPerDiskType = 10
+	DefaultTimeout       = 5 * time.Second
+	BatchSize            = 10
+	MaxConcurrentBatches = 5
 )
 
 var (
-	ErrItemsRequired      = errors.New("items is required")
-	ErrGroupLimitExceeded = errors.New("each disk_type group can contain at most 10 links")
+	ErrItemsRequired = errors.New("items is required")
 )
 
 type Item struct {
@@ -75,9 +74,6 @@ func (s *Service) Check(ctx context.Context, req Request) (Response, error) {
 	if len(items) == 0 {
 		return Response{}, ErrItemsRequired
 	}
-	if err := validateGroupLimits(items); err != nil {
-		return Response{}, err
-	}
 
 	timeout := req.Timeout
 	if timeout <= 0 {
@@ -90,39 +86,55 @@ func (s *Service) Check(ctx context.Context, req Request) (Response, error) {
 	completed := make([]bool, len(items))
 	resultCh := make(chan indexedResult, len(items))
 
+	batches := buildBatches(items)
+	batchSlots := make(chan struct{}, MaxConcurrentBatches)
 	var wg sync.WaitGroup
-	for index, item := range items {
+	for _, batch := range batches {
 		wg.Add(1)
-		go func(index int, item Item) {
+		go func(batch []indexedItem) {
 			defer wg.Done()
-			result := s.checker.Check(ctx, item)
-			result.DiskType = item.DiskType
-			result.URL = item.URL
-			result.Password = item.Password
 			select {
-			case resultCh <- indexedResult{index: index, result: result}:
+			case batchSlots <- struct{}{}:
 			case <-ctx.Done():
+				return
 			}
-		}(index, item)
+			defer func() { <-batchSlots }()
+
+			for _, entry := range batch {
+				if ctx.Err() != nil {
+					return
+				}
+				result := s.checker.Check(ctx, entry.item)
+				result.DiskType = entry.item.DiskType
+				result.URL = entry.item.URL
+				result.Password = entry.item.Password
+				select {
+				case resultCh <- indexedResult{index: entry.index, result: result}:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}(batch)
 	}
 
-	done := make(chan struct{})
 	go func() {
 		wg.Wait()
-		close(done)
+		close(resultCh)
 	}()
 
 	remaining := len(items)
 	for remaining > 0 {
 		select {
-		case item := <-resultCh:
+		case item, ok := <-resultCh:
+			if !ok {
+				remaining = 0
+				continue
+			}
 			if !completed[item.index] {
 				results[item.index] = item.result
 				completed[item.index] = true
 				remaining--
 			}
-		case <-done:
-			remaining = 0
 		case <-ctx.Done():
 			remaining = 0
 		}
@@ -155,6 +167,11 @@ type indexedResult struct {
 	result Result
 }
 
+type indexedItem struct {
+	index int
+	item  Item
+}
+
 func normalizeItems(items []Item) []Item {
 	out := make([]Item, 0, len(items))
 	for _, item := range items {
@@ -169,15 +186,28 @@ func normalizeItems(items []Item) []Item {
 	return out
 }
 
-func validateGroupLimits(items []Item) error {
-	counts := map[string]int{}
-	for _, item := range items {
-		counts[item.DiskType]++
-		if counts[item.DiskType] > MaxPerDiskType {
-			return fmt.Errorf("%w: %s", ErrGroupLimitExceeded, item.DiskType)
+func buildBatches(items []Item) [][]indexedItem {
+	typeOrder := make([]string, 0)
+	groups := map[string][]indexedItem{}
+	for index, item := range items {
+		if _, ok := groups[item.DiskType]; !ok {
+			typeOrder = append(typeOrder, item.DiskType)
+		}
+		groups[item.DiskType] = append(groups[item.DiskType], indexedItem{index: index, item: item})
+	}
+
+	var batches [][]indexedItem
+	for _, diskType := range typeOrder {
+		group := groups[diskType]
+		for start := 0; start < len(group); start += BatchSize {
+			end := start + BatchSize
+			if end > len(group) {
+				end = len(group)
+			}
+			batches = append(batches, group[start:end])
 		}
 	}
-	return nil
+	return batches
 }
 
 func groupResults(results []Result) map[string][]Result {

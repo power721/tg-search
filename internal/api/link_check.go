@@ -38,8 +38,6 @@ func (h handlers) externalCheckLinks(c *gin.Context) {
 		switch {
 		case errors.Is(err, linkcheck.ErrItemsRequired):
 			message = "items is required"
-		case errors.Is(err, linkcheck.ErrGroupLimitExceeded):
-			message = linkcheck.ErrGroupLimitExceeded.Error()
 		}
 		c.JSON(status, externalAPIResponse{Code: status, Message: message})
 		return

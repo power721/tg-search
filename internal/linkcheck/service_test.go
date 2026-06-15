@@ -2,7 +2,8 @@ package linkcheck
 
 import (
 	"context"
-	"errors"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -62,16 +63,42 @@ func TestServiceChecksItemsConcurrentlyAndMarksTimeoutsUncertain(t *testing.T) {
 	}
 }
 
-func TestServiceLimitsEachDiskTypeGroupToTenItems(t *testing.T) {
+func TestServiceSplitsSameDiskTypeIntoTenItemBatches(t *testing.T) {
 	service := NewService(Options{Checker: fakeChecker{}})
-	items := make([]Item, 0, 11)
-	for i := 0; i < 11; i++ {
-		items = append(items, Item{DiskType: "quark", URL: "https://pan.quark.cn/s/item" + string(rune('a'+i))})
+	items := make([]Item, 0, 100)
+	for i := 0; i < 100; i++ {
+		items = append(items, Item{DiskType: "quark", URL: fmt.Sprintf("https://pan.quark.cn/s/item-%03d", i)})
 	}
 
-	_, err := service.Check(context.Background(), Request{Items: items})
-	if !errors.Is(err, ErrGroupLimitExceeded) {
-		t.Fatalf("Check error = %v, want ErrGroupLimitExceeded", err)
+	response, err := service.Check(context.Background(), Request{Items: items})
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
+	if len(response.Results) != 100 {
+		t.Fatalf("results length = %d, want 100", len(response.Results))
+	}
+}
+
+func TestServiceRunsAtMostFiveChecksConcurrentlyAcrossBatches(t *testing.T) {
+	checker := &concurrencyChecker{delay: 10 * time.Millisecond}
+	service := NewService(Options{Checker: checker})
+	items := make([]Item, 0, 100)
+	for i := 0; i < 100; i++ {
+		items = append(items, Item{DiskType: "quark", URL: fmt.Sprintf("https://pan.quark.cn/s/item-%03d", i)})
+	}
+
+	response, err := service.Check(context.Background(), Request{
+		Timeout: 2 * time.Second,
+		Items:   items,
+	})
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
+	if len(response.Results) != 100 {
+		t.Fatalf("results length = %d, want 100", len(response.Results))
+	}
+	if checker.maxActive > 5 {
+		t.Fatalf("max active checks = %d, want <= 5", checker.maxActive)
 	}
 }
 
@@ -87,4 +114,30 @@ func TestServiceUsesFiveSecondDefaultTimeout(t *testing.T) {
 	if response.TimeoutMS != 5000 {
 		t.Fatalf("timeout_ms = %d, want 5000", response.TimeoutMS)
 	}
+}
+
+type concurrencyChecker struct {
+	mu        sync.Mutex
+	active    int
+	maxActive int
+	delay     time.Duration
+}
+
+func (c *concurrencyChecker) Check(ctx context.Context, item Item) Result {
+	c.mu.Lock()
+	c.active++
+	if c.active > c.maxActive {
+		c.maxActive = c.active
+	}
+	c.mu.Unlock()
+
+	select {
+	case <-time.After(c.delay):
+	case <-ctx.Done():
+	}
+
+	c.mu.Lock()
+	c.active--
+	c.mu.Unlock()
+	return Result{DiskType: item.DiskType, URL: item.URL, State: StateOK, Summary: "链接有效"}
 }

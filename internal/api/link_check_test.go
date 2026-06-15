@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -21,16 +22,16 @@ func TestExternalLinkCheckAPIRequiresAPIKey(t *testing.T) {
 	}
 }
 
-func TestExternalLinkCheckAPIValidatesGroupLimit(t *testing.T) {
+func TestExternalLinkCheckAPIAcceptsMoreThanTenLinksForSameDiskType(t *testing.T) {
 	deps := testDeps(t)
 	router := NewRouter(deps)
 	key := createTestAPIKey(t, router)
 
 	var items []map[string]string
-	for i := 0; i < 11; i++ {
+	for i := 0; i < 100; i++ {
 		items = append(items, map[string]string{
-			"disk_type": "quark",
-			"url":       "https://pan.quark.cn/s/item" + string(rune('a'+i)),
+			"disk_type": "unsupported-drive",
+			"url":       fmt.Sprintf("https://example.com/share-%03d", i),
 		})
 	}
 	payload, err := json.Marshal(map[string]any{"items": items})
@@ -44,8 +45,21 @@ func TestExternalLinkCheckAPIValidatesGroupLimit(t *testing.T) {
 	req.Header.Set("X-API-Key", key)
 	router.ServeHTTP(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d body=%s, want 400", w.Code, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", w.Code, w.Body.String())
+	}
+	var body struct {
+		Data struct {
+			Results []struct {
+				State string `json:"state"`
+			} `json:"results"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("invalid JSON: %v; body=%s", err, w.Body.String())
+	}
+	if len(body.Data.Results) != 100 {
+		t.Fatalf("results length = %d, want 100", len(body.Data.Results))
 	}
 }
 
