@@ -155,6 +155,13 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Send version
+        env:
+          api: ${{ secrets.VERSION_API }}
+        if: ${{ env.api != '' }}
+        run: |
+          curl -s "${{ env.api }}?type=tgs&version=${{ github.ref_name }}"
+
       - name: send telegram message
         uses: appleboy/telegram-action@master
         with:
