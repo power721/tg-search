@@ -45,4 +45,22 @@ describe('ApiHelpView', () => {
     expect(responseGrid.exists()).toBe(true)
     expect(responseGrid.findAll('.code-card')).toHaveLength(2)
   })
+
+  it('documents the public link check api', () => {
+    const wrapper = mount(ApiHelpView)
+    const text = wrapper.text()
+
+    expect(text).toContain('/api/check/links')
+    expect(text).toContain('"disk_type": "quark"')
+    expect(text).toContain('"timeout": 5')
+    expect(text).toContain('"timeout_ms": 5000')
+    expect(text).toContain('每 10 个拆成一个检测批次')
+    expect(text).toContain('最多同时执行 5 个批次')
+    expect(text).toContain('100 个夸克链接')
+    expect(text).toContain('"state": "ok"')
+    expect(text).toContain('bad')
+    expect(text).toContain('locked')
+    expect(text).toContain('unsupported')
+    expect(text).toContain('uncertain')
+  })
 })

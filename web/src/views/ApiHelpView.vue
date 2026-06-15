@@ -53,6 +53,31 @@ const mediaParams: ParamRow[] = [
   { name: 'sig', type: 'string', required: '签名访问必填', description: '媒体 URL 签名，由搜索结果里的媒体 URL 自动携带。' }
 ]
 
+const linkCheckParams: ParamRow[] = [
+  { name: 'items', type: 'array', required: '是', description: '待检测链接数组。' },
+  { name: 'items[].disk_type', type: 'string', required: '是', description: '网盘类型，例如 quark、aliyun、baidu、tianyi、xunlei、115、123、uc、mobile。' },
+  { name: 'items[].url', type: 'string', required: '是', description: '完整分享链接。' },
+  { name: 'items[].password', type: 'string', required: '否', description: '提取码，未包含在链接里时可传。' },
+  { name: 'timeout', type: 'number', required: '否', description: '整次检测超时时间，单位秒，默认 5。' },
+  { name: 'timeout_ms', type: 'number', required: '否', description: '整次检测超时时间，单位毫秒；同时传入时优先于 timeout。' }
+]
+
+const linkCheckFields: FieldRow[] = [
+  { name: 'data.timeout_ms', type: 'number', description: '本次检测使用的总超时时间，单位毫秒。' },
+  { name: 'data.results', type: 'array', description: '按请求顺序返回的检测结果。' },
+  { name: 'data.grouped', type: 'object', description: '按 disk_type 分组的检测结果，便于外部系统直接消费。' },
+  { name: 'state', type: 'string', description: '检测状态：ok、bad、locked、unsupported、uncertain。' },
+  { name: 'summary', type: 'string', description: '面向调用方展示的简短状态说明。' }
+]
+
+const linkCheckStates: FieldRow[] = [
+  { name: 'ok', type: '有效', description: '链接有效。' },
+  { name: 'bad', type: '失效', description: '链接失效、过期、删除或被取消。' },
+  { name: 'locked', type: '受限', description: '需要提取码，或提取码错误/缺失。' },
+  { name: 'unsupported', type: '不支持', description: '当前网盘类型暂不支持检测。' },
+  { name: 'uncertain', type: '不确定', description: '请求失败、超时或无法确认状态。' }
+]
+
 const getSearchExample = `curl -G 'http://localhost:9900/api/search' \\
   -H 'X-API-Key: YOUR_API_KEY' \\
   --data-urlencode 'kw=ubuntu' \\
@@ -134,6 +159,53 @@ const videoExample = `curl 'http://localhost:9900/v/202001' \\
 const imageExample = `curl 'http://localhost:9900/i/201001' \\
   -H 'X-API-Key: YOUR_API_KEY'`
 
+const linkCheckExample = `curl -X POST 'http://localhost:9900/api/check/links' \\
+  -H 'Content-Type: application/json' \\
+  -H 'X-API-Key: YOUR_API_KEY' \\
+  -d '{
+    "timeout": 5,
+    "timeout_ms": 5000,
+    "items": [
+      {
+        "disk_type": "quark",
+        "url": "https://pan.quark.cn/s/xxxx",
+        "password": "abcd"
+      },
+      {
+        "disk_type": "aliyun",
+        "url": "https://www.alipan.com/s/yyyy"
+      }
+    ]
+  }'`
+
+const linkCheckResponseExample = `{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "timeout_ms": 5000,
+    "results": [
+      {
+        "disk_type": "quark",
+        "url": "https://pan.quark.cn/s/xxxx",
+        "password": "abcd",
+        "state": "ok",
+        "summary": "链接有效"
+      }
+    ],
+    "grouped": {
+      "quark": [
+        {
+          "disk_type": "quark",
+          "url": "https://pan.quark.cn/s/xxxx",
+          "password": "abcd",
+          "state": "ok",
+          "summary": "链接有效"
+        }
+      ]
+    }
+  }
+}`
+
 const signedMediaExample = `<video
   src="/v/202001?exp=1735689600&sig=SIGNED_VALUE"
   controls
@@ -186,6 +258,11 @@ async function copyCode(key: string, value: string) {
         <small>资源搜索</small>
       </div>
       <div class="summary-item">
+        <span class="method method-post">POST</span>
+        <strong>/api/check/links</strong>
+        <small>网盘链接有效性检测</small>
+      </div>
+      <div class="summary-item">
         <span class="method method-get">GET</span>
         <strong>/v/:fileid</strong>
         <small>视频流</small>
@@ -205,8 +282,8 @@ async function copyCode(key: string, value: string) {
         </div>
       </div>
       <p class="doc-text">
-        <code>/api/search</code> 必须通过请求头携带 API Key。<code>/api/health</code> 可携带 API Key 校验密钥并返回版本。
-        <code>/v</code> 和 <code>/i</code> 可以通过请求头携带 API Key，
+        <code>/api/search</code> 和 <code>/api/check/links</code> 必须通过请求头携带 API Key。
+        <code>/api/health</code> 可携带 API Key 校验密钥并返回版本。<code>/v</code> 和 <code>/i</code> 可以通过请求头携带 API Key，
         也可以直接使用搜索结果中返回的带 <code>exp</code> 与 <code>sig</code> 的签名媒体 URL。
       </p>
       <div class="auth-grid">
@@ -308,6 +385,105 @@ async function copyCode(key: string, value: string) {
           </div>
           <pre><code>{{ searchResultsResponseExample }}</code></pre>
         </div>
+      </div>
+    </section>
+
+    <section class="panel api-section">
+      <div class="endpoint-heading">
+        <span class="method method-post">POST</span>
+        <div>
+          <h2>/api/check/links</h2>
+          <p>按需检测网盘分享链接是否仍然可用，适合在外部系统完成搜索后过滤失效链接。</p>
+        </div>
+      </div>
+
+      <h3>请求参数</h3>
+      <div class="table-panel">
+        <table>
+          <thead>
+            <tr>
+              <th>参数</th>
+              <th>类型</th>
+              <th>必填</th>
+              <th>说明</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="param in linkCheckParams" :key="param.name">
+              <td><code>{{ param.name }}</code></td>
+              <td>{{ param.type }}</td>
+              <td>{{ param.required }}</td>
+              <td>{{ param.description }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p class="doc-text">
+        检测会按 <code>disk_type</code> 分组，同类型链接每 10 个拆成一个检测批次，最多同时执行 5 个批次。
+        例如 100 个夸克链接会拆成 10 个批次并以 5 批并发处理。达到超时时间后，未完成的链接会以
+        <code>uncertain</code> 返回。
+      </p>
+
+      <div class="code-grid">
+        <div class="code-card">
+          <div class="code-title">
+            <strong>请求示例</strong>
+            <button type="button" @click="copyCode('link-check', linkCheckExample)">
+              {{ copiedKey === 'link-check' ? '已复制' : '复制' }}
+            </button>
+          </div>
+          <pre><code>{{ linkCheckExample }}</code></pre>
+        </div>
+        <div class="code-card">
+          <div class="code-title">
+            <strong>返回示例</strong>
+            <button type="button" @click="copyCode('link-check-response', linkCheckResponseExample)">
+              {{ copiedKey === 'link-check-response' ? '已复制' : '复制' }}
+            </button>
+          </div>
+          <pre><code>{{ linkCheckResponseExample }}</code></pre>
+        </div>
+      </div>
+
+      <h3>响应字段</h3>
+      <div class="table-panel">
+        <table>
+          <thead>
+            <tr>
+              <th>字段</th>
+              <th>类型</th>
+              <th>说明</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="field in linkCheckFields" :key="field.name">
+              <td><code>{{ field.name }}</code></td>
+              <td>{{ field.type }}</td>
+              <td>{{ field.description }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>状态说明</h3>
+      <div class="table-panel">
+        <table>
+          <thead>
+            <tr>
+              <th>状态</th>
+              <th>含义</th>
+              <th>说明</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="state in linkCheckStates" :key="state.name">
+              <td><code>{{ state.name }}</code></td>
+              <td>{{ state.type }}</td>
+              <td>{{ state.description }}</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </section>
 
@@ -534,6 +710,12 @@ async function copyCode(key: string, value: string) {
   background: var(--app-success-bg);
   border-color: color-mix(in srgb, var(--app-success) 30%, var(--app-border));
   color: var(--app-success);
+}
+
+.method-post {
+  background: var(--app-warning-bg);
+  border-color: color-mix(in srgb, var(--app-warning) 35%, var(--app-border));
+  color: var(--app-warning);
 }
 
 .auth-grid,
