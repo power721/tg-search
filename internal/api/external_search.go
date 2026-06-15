@@ -55,6 +55,7 @@ type externalSearchResult struct {
 type externalLink struct {
 	Type      string         `json:"type"`
 	URL       string         `json:"url"`
+	Size      int64          `json:"size,omitempty"`
 	Password  string         `json:"password,omitempty"`
 	Datetime  time.Time      `json:"datetime,omitempty"`
 	WorkTitle string         `json:"work_title,omitempty"`
@@ -65,6 +66,7 @@ type externalMergedLink struct {
 	URL      string         `json:"url"`
 	Password string         `json:"password,omitempty"`
 	Note     string         `json:"note,omitempty"`
+	Size     int64          `json:"size,omitempty"`
 	Datetime time.Time      `json:"datetime"`
 	Images   []string       `json:"images,omitempty"`
 	Media    *externalMedia `json:"media,omitempty"`
@@ -397,7 +399,7 @@ func externalResourceFilters(cloudTypes []string) []externalResourceFilter {
 			{category: "cloud_drive"},
 			{category: "magnet"},
 			{category: "ed2k"},
-			{category: "video"},
+			{category: "files", typ: "video"},
 		}
 	}
 	var filters []externalResourceFilter
@@ -412,7 +414,7 @@ func externalResourceFilters(cloudTypes []string) []externalResourceFilter {
 		case value == "ed2k":
 			addExternalResourceFilter(&filters, seen, externalResourceFilter{category: "ed2k"})
 		case value == "video":
-			addExternalResourceFilter(&filters, seen, externalResourceFilter{category: "video"})
+			addExternalResourceFilter(&filters, seen, externalResourceFilter{category: "files", typ: "video"})
 		case isCloudDriveProvider(value):
 			if !hasAllCloudDrives {
 				addExternalResourceFilter(&filters, seen, externalResourceFilter{category: "cloud_drive", typ: value})
@@ -530,6 +532,7 @@ func buildExternalSearchResponse(items []resource.Item, total int, resultType st
 				URL:      link.URL,
 				Password: link.Password,
 				Note:     firstNonEmptyString(link.WorkTitle, result.Title),
+				Size:     link.Size,
 				Datetime: link.Datetime,
 				Images:   result.Images,
 				Media:    link.Media,
@@ -551,6 +554,7 @@ func externalResultFromResource(item resource.Item, includeMediaMetadata bool, i
 	link := externalLink{
 		Type:      externalResourceType(item),
 		URL:       externalResourceURL(item),
+		Size:      item.SizeBytes,
 		Password:  item.Password,
 		Datetime:  item.Datetime,
 		WorkTitle: title,
