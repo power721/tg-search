@@ -2,8 +2,8 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"runtime"
@@ -17,11 +17,11 @@ import (
 	"tg-search/internal/model"
 )
 
-var githubLatestReleaseURL = "https://api.github.com/repos/power721/tg-search/releases/latest"
-var githubHTTPClient = http.DefaultClient
+var versionFileURL = "https://d.har01d.cn/tgs.version.txt"
+var versionHTTPClient = http.DefaultClient
 
 func (h handlers) getVersionSettings(c *gin.Context) {
-	info, err := loadVersionInfo(c.Request.Context(), githubHTTPClient, shouldCheckUpdate(c.Query("check_update")))
+	info, err := loadVersionInfo(c.Request.Context(), versionHTTPClient, shouldCheckUpdate(c.Query("check_update")))
 	if err != nil {
 		errorJSON(c, http.StatusBadGateway, err)
 		return
@@ -77,15 +77,15 @@ func loadVersionInfo(ctx context.Context, client *http.Client, checkUpdate bool)
 	if !checkUpdate {
 		return model.VersionInfoResponse{CurrentVersion: current}, nil
 	}
-	latest, err := fetchLatestGitHubRelease(ctx, client)
+	latest, err := fetchLatestVersion(ctx, client)
 	if err != nil {
 		return model.VersionInfoResponse{CurrentVersion: current}, err
 	}
 	return model.VersionInfoResponse{
 		CurrentVersion:  current,
-		LatestVersion:   latest.TagName,
-		LatestURL:       latest.HTMLURL,
-		UpdateAvailable: newerSemver(latest.TagName, current),
+		LatestVersion:   latest,
+		LatestURL:       "https://github.com/power721/tg-search/releases/latest",
+		UpdateAvailable: newerSemver(latest, current),
 	}, nil
 }
 
@@ -94,36 +94,31 @@ func shouldCheckUpdate(value string) bool {
 	return value == "1" || value == "true" || value == "yes"
 }
 
-type githubReleaseResponse struct {
-	TagName string `json:"tag_name"`
-	HTMLURL string `json:"html_url"`
-}
-
-func fetchLatestGitHubRelease(ctx context.Context, client *http.Client) (githubReleaseResponse, error) {
+func fetchLatestVersion(ctx context.Context, client *http.Client) (string, error) {
 	requestCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, githubLatestReleaseURL, nil)
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, versionFileURL, nil)
 	if err != nil {
-		return githubReleaseResponse{}, err
+		return "", err
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "tg-search")
 	resp, err := client.Do(req)
 	if err != nil {
-		return githubReleaseResponse{}, fmt.Errorf("check GitHub release: %w", err)
+		return "", fmt.Errorf("fetch version file: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return githubReleaseResponse{}, fmt.Errorf("check GitHub release: status %d", resp.StatusCode)
+		return "", fmt.Errorf("fetch version file: status %d", resp.StatusCode)
 	}
-	var latest githubReleaseResponse
-	if err := json.NewDecoder(resp.Body).Decode(&latest); err != nil {
-		return githubReleaseResponse{}, fmt.Errorf("decode GitHub release: %w", err)
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read version file: %w", err)
 	}
-	if strings.TrimSpace(latest.TagName) == "" {
-		return githubReleaseResponse{}, fmt.Errorf("GitHub release tag_name is empty")
+	version := strings.TrimSpace(string(data))
+	if version == "" {
+		return "", fmt.Errorf("version file is empty")
 	}
-	return latest, nil
+	return version, nil
 }
 
 func newerSemver(latest string, current string) bool {

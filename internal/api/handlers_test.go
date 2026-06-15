@@ -2663,24 +2663,24 @@ func TestRuntimeSettingsRejectInvalidValues(t *testing.T) {
 
 func TestVersionSettingsReportsGitHubRelease(t *testing.T) {
 	originalVersion := build.Version
-	originalURL := githubLatestReleaseURL
-	originalClient := githubHTTPClient
+	originalURL := versionFileURL
+	originalClient := versionHTTPClient
 	defer func() {
 		build.Version = originalVersion
-		githubLatestReleaseURL = originalURL
-		githubHTTPClient = originalClient
+		versionFileURL = originalURL
+		versionHTTPClient = originalClient
 	}()
 
 	build.Version = "v1.2.3"
-	githubLatestReleaseURL = "https://api.github.test/repos/power721/tg-search/releases/latest"
-	githubHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		if req.URL.String() != githubLatestReleaseURL {
-			t.Fatalf("unexpected GitHub URL: %s", req.URL.String())
+	versionFileURL = "https://d.har01d.test/tgs.version.txt"
+	versionHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.String() != versionFileURL {
+			t.Fatalf("unexpected version URL: %s", req.URL.String())
 		}
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(`{"tag_name":"v1.2.4","html_url":"https://github.com/power721/tg-search/releases/tag/v1.2.4"}`)),
+			Body:       io.NopCloser(strings.NewReader("v1.2.4")),
 		}, nil
 	})}
 
@@ -2699,22 +2699,22 @@ func TestVersionSettingsReportsGitHubRelease(t *testing.T) {
 	if body.CurrentVersion != "v1.2.3" || body.LatestVersion != "v1.2.4" || !body.UpdateAvailable {
 		t.Fatalf("version response = %+v", body)
 	}
-	if body.LatestURL != "https://github.com/power721/tg-search/releases/tag/v1.2.4" {
+	if body.LatestURL != "https://github.com/power721/tg-search/releases/latest" {
 		t.Fatalf("latest url = %q", body.LatestURL)
 	}
 }
 
 func TestVersionSettingsReportsCurrentVersionWithoutGitHubCheck(t *testing.T) {
 	originalVersion := build.Version
-	originalClient := githubHTTPClient
+	originalClient := versionHTTPClient
 	defer func() {
 		build.Version = originalVersion
-		githubHTTPClient = originalClient
+		versionHTTPClient = originalClient
 	}()
 
 	build.Version = "v1.2.3"
-	githubHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		t.Fatalf("unexpected GitHub request: %s", req.URL.String())
+	versionHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		t.Fatalf("unexpected version request: %s", req.URL.String())
 		return nil, nil
 	})}
 
@@ -2737,21 +2737,21 @@ func TestVersionSettingsReportsCurrentVersionWithoutGitHubCheck(t *testing.T) {
 
 func TestVersionSettingsDoesNotClaimUpdateForDevVersion(t *testing.T) {
 	originalVersion := build.Version
-	originalURL := githubLatestReleaseURL
-	originalClient := githubHTTPClient
+	originalURL := versionFileURL
+	originalClient := versionHTTPClient
 	defer func() {
 		build.Version = originalVersion
-		githubLatestReleaseURL = originalURL
-		githubHTTPClient = originalClient
+		versionFileURL = originalURL
+		versionHTTPClient = originalClient
 	}()
 
 	build.Version = "dev"
-	githubLatestReleaseURL = "https://api.github.test/repos/power721/tg-search/releases/latest"
-	githubHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	versionFileURL = "https://d.har01d.test/tgs.version.txt"
+	versionHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(`{"tag_name":"v9.9.9","html_url":"https://github.com/power721/tg-search/releases/tag/v9.9.9"}`)),
+			Body:       io.NopCloser(strings.NewReader("v9.9.9")),
 		}, nil
 	})}
 
