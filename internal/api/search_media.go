@@ -253,28 +253,6 @@ func (h handlers) fileResultMedia(ctx context.Context, file model.File, signed b
 	return h.mediaURLs(ctx, imageFileID, videoFileID, signed)
 }
 
-func (h handlers) resourceItemMedia(ctx context.Context, item resource.Item, signed bool) (*model.MediaURLs, error) {
-	files := []model.File{}
-	if item.Kind == "file" {
-		files = append(files, model.File{
-			TelegramFileID: item.TelegramFileID,
-			FileName:       item.FileName,
-			Extension:      item.Extension,
-			MimeType:       item.MimeType,
-			SizeBytes:      item.SizeBytes,
-			Category:       item.Category,
-		})
-	}
-	if len(files) == 0 && item.ChannelID > 0 && item.TelegramMessageID > 0 && h.deps.Files != nil {
-		found, err := h.deps.Files.FindByMessageRef(ctx, item.ChannelID, item.TelegramMessageID)
-		if err != nil {
-			return nil, err
-		}
-		files = found
-	}
-	return h.searchResultMedia(ctx, 0, item.MessageType, files, signed)
-}
-
 func (h handlers) mediaURLs(ctx context.Context, imageFileID int64, videoFileID int64, signed bool) (*model.MediaURLs, error) {
 	signer, err := h.requestMediaURLSigner(ctx, signed)
 	if err != nil {
