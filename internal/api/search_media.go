@@ -254,6 +254,9 @@ func (h handlers) fileResultMedia(ctx context.Context, file model.File, signed b
 }
 
 func (h handlers) mediaURLs(ctx context.Context, imageFileID int64, videoFileID int64, signed bool) (*model.MediaURLs, error) {
+	if imageFileID <= 0 && videoFileID <= 0 {
+		return nil, nil
+	}
 	signer, err := h.requestMediaURLSigner(ctx, signed)
 	if err != nil {
 		return nil, err

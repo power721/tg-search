@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -56,5 +57,19 @@ func TestMediaURLSignerSignsMultiplePathsWithOneKey(t *testing.T) {
 		if parsed.Query().Get("sig") != wantSig {
 			t.Fatalf("URL %q signature = %q, want %q", rawURL, parsed.Query().Get("sig"), wantSig)
 		}
+	}
+}
+
+func TestMediaURLsSkipsSignerWhenNoMedia(t *testing.T) {
+	h := handlers{deps: Dependencies{
+		APIKeyService: apikey.NewService(nil, nil),
+	}}
+
+	media, err := h.mediaURLs(context.Background(), 0, 0, true)
+	if err != nil {
+		t.Fatalf("media URLs: %v", err)
+	}
+	if media != nil {
+		t.Fatalf("media = %+v, want nil", media)
 	}
 }
