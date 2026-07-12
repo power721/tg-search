@@ -5783,7 +5783,7 @@ func (f *apiRemoteSearchClient) SearchMessages(ctx context.Context, account tele
 	return f.items, nil
 }
 
-func testDeps(t *testing.T) Dependencies {
+func testDeps(t testing.TB) Dependencies {
 	t.Helper()
 	deps, _ := testDepsWithDB(t)
 	return deps
@@ -5802,7 +5802,7 @@ func errorMessage(t *testing.T, data []byte) string {
 	return body.Error.Message
 }
 
-func testDepsWithDB(t *testing.T) (Dependencies, *sql.DB) {
+func testDepsWithDB(t testing.TB) (Dependencies, *sql.DB) {
 	t.Helper()
 	root := t.TempDir()
 	runtimeConfig := config.Config{Storage: config.StorageConfig{Path: root, MaxDBSize: config.Size(10), MaxMediaCache: config.Size(20)}}
