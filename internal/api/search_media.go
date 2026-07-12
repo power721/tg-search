@@ -18,6 +18,67 @@ import (
 
 const searchMediaURLTTL = 24 * time.Hour
 
+type mediaURLSigner struct {
+	key string
+	exp string
+}
+
+func newMediaURLSigner(key string, expiresAt time.Time) mediaURLSigner {
+	exp := ""
+	if key != "" {
+		exp = strconv.FormatInt(expiresAt.UTC().Unix(), 10)
+	}
+	return mediaURLSigner{key: key, exp: exp}
+}
+
+func (h handlers) requestMediaURLSigner(ctx context.Context, signed bool) (mediaURLSigner, error) {
+	if !signed || h.deps.APIKeyService == nil {
+		return mediaURLSigner{}, nil
+	}
+	active, err := h.deps.APIKeyService.EnsureActive(ctx)
+	if err != nil {
+		return mediaURLSigner{}, err
+	}
+	return newMediaURLSigner(active.Key, time.Now().UTC().Add(searchMediaURLTTL)), nil
+}
+
+func (s mediaURLSigner) mediaURL(kind string, telegramFileID int64) (string, error) {
+	path := "/" + kind + "/" + url.PathEscape(strconv.FormatInt(telegramFileID, 10))
+	if s.key == "" {
+		return path, nil
+	}
+	sig, err := apikey.MediaSignature(s.key, http.MethodGet, path, s.exp)
+	if err != nil {
+		return "", err
+	}
+	values := url.Values{}
+	values.Set("exp", s.exp)
+	values.Set("sig", sig)
+	return path + "?" + values.Encode(), nil
+}
+
+func (s mediaURLSigner) mediaURLs(imageFileID int64, videoFileID int64) (*model.MediaURLs, error) {
+	if imageFileID <= 0 && videoFileID <= 0 {
+		return nil, nil
+	}
+	var media model.MediaURLs
+	if imageFileID > 0 {
+		imageURL, err := s.mediaURL("i", imageFileID)
+		if err != nil {
+			return nil, err
+		}
+		media.ImageURL = imageURL
+	}
+	if videoFileID > 0 {
+		videoURL, err := s.mediaURL("v", videoFileID)
+		if err != nil {
+			return nil, err
+		}
+		media.VideoURL = videoURL
+	}
+	return &media, nil
+}
+
 func (h handlers) shouldSignMediaURLs(c *gin.Context) bool {
 	if h.hasAdminSession(c) {
 		return false
@@ -148,6 +209,11 @@ func (h handlers) searchResultMedia(ctx context.Context, messageID int64, messag
 		}
 		files = found
 	}
+	imageFileID, videoFileID := mediaFileIDs(messageType, files)
+	return h.mediaURLs(ctx, imageFileID, videoFileID, signed)
+}
+
+func mediaFileIDs(messageType string, files []model.File) (int64, int64) {
 	var imageFileID int64
 	var videoFileID int64
 	for _, file := range files {
@@ -167,7 +233,7 @@ func (h handlers) searchResultMedia(ctx context.Context, messageID int64, messag
 	if messageType == "photo" && imageFileID == 0 {
 		imageFileID = firstTelegramFileID(files)
 	}
-	return h.mediaURLs(ctx, imageFileID, videoFileID, signed)
+	return imageFileID, videoFileID
 }
 
 func (h handlers) fileResultMedia(ctx context.Context, file model.File, signed bool) (*model.MediaURLs, error) {
@@ -210,48 +276,19 @@ func (h handlers) resourceItemMedia(ctx context.Context, item resource.Item, sig
 }
 
 func (h handlers) mediaURLs(ctx context.Context, imageFileID int64, videoFileID int64, signed bool) (*model.MediaURLs, error) {
-	if imageFileID <= 0 && videoFileID <= 0 {
-		return nil, nil
+	signer, err := h.requestMediaURLSigner(ctx, signed)
+	if err != nil {
+		return nil, err
 	}
-	var media model.MediaURLs
-	if imageFileID > 0 {
-		imageURL, err := h.mediaURL(ctx, "i", imageFileID, signed)
-		if err != nil {
-			return nil, err
-		}
-		media.ImageURL = imageURL
-	}
-	if videoFileID > 0 {
-		videoURL, err := h.mediaURL(ctx, "v", videoFileID, signed)
-		if err != nil {
-			return nil, err
-		}
-		media.VideoURL = videoURL
-	}
-	if media.ImageURL == "" && media.VideoURL == "" {
-		return nil, nil
-	}
-	return &media, nil
+	return signer.mediaURLs(imageFileID, videoFileID)
 }
 
 func (h handlers) mediaURL(ctx context.Context, kind string, telegramFileID int64, signed bool) (string, error) {
-	path := "/" + kind + "/" + url.PathEscape(strconv.FormatInt(telegramFileID, 10))
-	if !signed || h.deps.APIKeyService == nil {
-		return path, nil
-	}
-	active, err := h.deps.APIKeyService.EnsureActive(ctx)
+	signer, err := h.requestMediaURLSigner(ctx, signed)
 	if err != nil {
 		return "", err
 	}
-	exp := strconv.FormatInt(time.Now().UTC().Add(searchMediaURLTTL).Unix(), 10)
-	sig, err := apikey.MediaSignature(active.Key, http.MethodGet, path, exp)
-	if err != nil {
-		return "", err
-	}
-	values := url.Values{}
-	values.Set("exp", exp)
-	values.Set("sig", sig)
-	return path + "?" + values.Encode(), nil
+	return signer.mediaURL(kind, telegramFileID)
 }
 
 func firstTelegramFileID(files []model.File) int64 {
