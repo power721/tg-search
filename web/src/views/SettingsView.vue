@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useMessage } from 'naive-ui'
+import { useDialog, useMessage } from 'naive-ui'
 import { computed, onMounted, ref, watch } from 'vue'
 import { apiDelete, apiGet, apiPost, apiPut } from '@/api/client'
 import type {
@@ -31,6 +31,7 @@ import { useAPIKeyStore } from '@/stores/apiKey'
 import { useAuthStore } from '@/stores/auth'
 
 const message = useMessage()
+const dialog = useDialog()
 const apiKey = useAPIKeyStore()
 const auth = useAuthStore()
 const showAPIKey = ref(false)
@@ -54,6 +55,7 @@ const telegramBotForm = ref({
 const versionInfo = ref<VersionInfoResponse | null>(null)
 const versionLoading = ref(false)
 const versionError = ref('')
+const repairLoading = ref(false)
 const systemInfo = ref<SystemInfoResponse | null>(null)
 const currentRuntimeSettings = ref<RuntimeSettings | null>(null)
 const activeTab = ref('security')
@@ -444,6 +446,26 @@ async function loadSystemInfo() {
   } catch (error) {
     message.error(error instanceof Error ? error.message : '无法加载系统信息')
   }
+}
+
+function repairMediaTitles() {
+  dialog.warning({
+    title: '修复媒体标题',
+    content: '将重新解析历史消息并更新被网盘标签覆盖的标题（如“光鸭”）。任务在后台运行，可在「任务」页查看进度。是否继续？',
+    positiveText: '修复',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      repairLoading.value = true
+      try {
+        const res = await apiPost<{ task_id: number; status: string }>('/api/maintenance/media-title/repair')
+        message.success(`修复任务已开始 #${res.task_id}，进度见「任务」页`)
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : '启动修复任务失败')
+      } finally {
+        repairLoading.value = false
+      }
+    }
+  })
 }
 
 async function updateTelegramAPI() {
@@ -1791,6 +1813,15 @@ function versionStatusText() {
                 <dd>{{ systemInfo?.cpu_count ?? '-' }}</dd>
               </div>
             </dl>
+          </section>
+          <section class="panel maintenance-panel">
+            <div class="panel-header">
+              <h2>媒体标题修复</h2>
+              <n-button data-testid="repair-media-title" size="small" type="primary" :loading="repairLoading" @click="repairMediaTitles">
+                修复
+              </n-button>
+            </div>
+            <p class="panel-hint">修复被网盘标签覆盖的媒体标题（如“光鸭”）。任务在后台运行，进度见「任务」页。</p>
           </section>
         </div>
       </n-tab-pane>
