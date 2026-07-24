@@ -120,7 +120,7 @@ func (p *Processor) enqueueGapRecovery(ctx context.Context, channel model.Channe
 	if cursor.LastMessageID <= 0 || event.MessageID <= cursor.LastMessageID+1 {
 		return nil
 	}
-	_, err = p.tasks.Enqueue(ctx, model.TaskTypeGapRecovery, taskpkg.GapRecoveryPayload{
+	_, err = p.tasks.EnqueueGapRecovery(ctx, taskpkg.GapRecoveryPayload{
 		AccountID:         event.AccountID,
 		ChannelID:         channel.ID,
 		FromMessageID:     cursor.LastMessageID + 1,
