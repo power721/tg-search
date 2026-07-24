@@ -127,6 +127,51 @@ ON CONFLICT(message_id) DO UPDATE SET
   raw_json = excluded.raw_json,
   updated_at = excluded.updated_at`
 
+// BatchTextByMessageIDs returns telegram_message_contents.text for the given
+// message ids, batched to bound the parameter count. Missing ids are absent
+// from the map.
+func (r *MessageRepository) BatchTextByMessageIDs(ctx context.Context, messageIDs []int64) (map[int64]string, error) {
+	out := make(map[int64]string, len(messageIDs))
+	if len(messageIDs) == 0 {
+		return out, nil
+	}
+	const batchSize = 500
+	for start := 0; start < len(messageIDs); start += batchSize {
+		end := start + batchSize
+		if end > len(messageIDs) {
+			end = len(messageIDs)
+		}
+		batch := messageIDs[start:end]
+		params := make([]any, len(batch))
+		for i, id := range batch {
+			params[i] = id
+		}
+		query := `SELECT message_id, COALESCE(text, '') FROM telegram_message_contents WHERE message_id IN (` +
+			strings.Repeat("?,", len(batch)-1) + "?)"
+		rows, err := r.db.QueryContext(ctx, query, params...)
+		if err != nil {
+			return nil, fmt.Errorf("batch load message texts: %w", err)
+		}
+		for rows.Next() {
+			var id int64
+			var text string
+			if err := rows.Scan(&id, &text); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			out[id] = text
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
 func (r *MessageRepository) Search(ctx context.Context, params SearchParams) ([]model.SearchResult, error) {
 	limit := clampLimit(params.Limit, 50)
 	where, args := messageSearchWhere(params)
