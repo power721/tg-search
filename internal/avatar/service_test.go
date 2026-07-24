@@ -2,7 +2,9 @@ package avatar
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -43,6 +45,19 @@ func (m *mockTelegram) DownloadUserAvatar(ctx context.Context, session telegram.
 	return telegram.ImageFile{Data: []byte("avatar"), MIMEType: "image/jpeg"}, nil
 }
 
+// drainQueue blocks until every background worker the RetryQueue spawned has
+// finished. Without this, enqueue tests return while workers are still writing
+// avatar files into t.TempDir, racing with TempDir cleanup
+// ("TempDir RemoveAll cleanup: ... directory not empty").
+func drainQueue(t *testing.T, queue *scheduler.RetryQueue) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := queue.Stop(ctx); err != nil {
+		t.Fatalf("queue.Stop: %v", err)
+	}
+}
+
 func TestEnqueueAccountAvatar(t *testing.T) {
 	tmpDir := t.TempDir()
 	queue := scheduler.NewRetryQueue(scheduler.RetryQueueOptions{
@@ -71,15 +86,16 @@ func TestEnqueueAccountAvatar(t *testing.T) {
 	if job.ID == "" {
 		t.Fatal("EnqueueAccountAvatar() returned empty job ID")
 	}
+	drainQueue(t, queue)
 }
 
 type mockTelegramChannel struct {
 	telegram.NopClient
-	downloadChannelAvatarCalled bool
+	downloadChannelAvatarCalled atomic.Bool
 }
 
 func (m *mockTelegramChannel) DownloadChannelAvatar(ctx context.Context, session telegram.AccountSession, channelID int64, accessHash int64, photoID int64) (telegram.ImageFile, error) {
-	m.downloadChannelAvatarCalled = true
+	m.downloadChannelAvatarCalled.Store(true)
 	return telegram.ImageFile{Data: []byte("channel-avatar"), MIMEType: "image/jpeg"}, nil
 }
 
@@ -113,6 +129,7 @@ func TestEnqueueChannelAvatar(t *testing.T) {
 	if job.ID == "" {
 		t.Fatal("EnqueueChannelAvatar() returned empty job ID")
 	}
+	drainQueue(t, queue)
 }
 
 func TestEnqueueChannelAvatars(t *testing.T) {
@@ -143,4 +160,5 @@ func TestEnqueueChannelAvatars(t *testing.T) {
 	if len(jobs) != 2 {
 		t.Errorf("EnqueueChannelAvatars() returned %d jobs, want 2", len(jobs))
 	}
+	drainQueue(t, queue)
 }
