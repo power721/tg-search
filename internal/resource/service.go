@@ -3,15 +3,21 @@ package resource
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"go.uber.org/zap"
+
+	"tg-search/internal/link"
 	"tg-search/internal/model"
 	"tg-search/internal/repository"
 	"tg-search/internal/searchrank"
+	"tg-search/internal/task"
 )
 
 type Query struct {
@@ -142,25 +148,175 @@ type DeleteManyResult struct {
 }
 
 type Service struct {
-	links *repository.LinkRepository
-	files *repository.FileRepository
-	stats *repository.ResourceStatsRepository
-	index *repository.ResourceIndexRepository
+	links     *repository.LinkRepository
+	files     *repository.FileRepository
+	stats     *repository.ResourceStatsRepository
+	index     *repository.ResourceIndexRepository
+	messages  *repository.MessageRepository
+	extractor *link.Extractor
+	logger    *zap.Logger
 }
 
 var ErrInvalidResourceID = errors.New("invalid resource id")
 
 func NewService(links *repository.LinkRepository, files *repository.FileRepository, extras ...any) *Service {
-	service := &Service{links: links, files: files}
+	service := &Service{links: links, files: files, logger: zap.NewNop()}
 	for _, extra := range extras {
-		switch repo := extra.(type) {
+		switch value := extra.(type) {
 		case *repository.ResourceStatsRepository:
-			service.stats = repo
+			service.stats = value
 		case *repository.ResourceIndexRepository:
-			service.index = repo
+			service.index = value
+		case *repository.MessageRepository:
+			service.messages = value
+		case *link.Extractor:
+			service.extractor = value
+		case *zap.Logger:
+			service.logger = value
 		}
 	}
 	return service
+}
+
+// repairProgressSink mirrors task.ProgressSink so this package need not import
+// the task package; task.ProgressSink satisfies it structurally.
+type repairProgressSink interface {
+	Progress(ctx context.Context, progress, total int64, message string) error
+	Status(ctx context.Context) (string, error)
+}
+
+// RepairSummary reports the outcome of a media-title repair pass.
+type RepairSummary struct {
+	Affected          int `json:"affected"`
+	Changed           int `json:"changed"`
+	Unchanged         int `json:"unchanged"`
+	RefreshedMessages int `json:"refreshed_messages"`
+}
+
+// RepairMediaTitles repairs telegram_links rows whose media_title was clobbered
+// by a provider label. It re-parses each affected message's stored text with the
+// fixed extractor and updates media_title only where the re-parsed title is
+// non-empty and differs. When dryRun is true it plans but writes nothing.
+// resource_index is refreshed for the changed messages so the derived title and
+// the FTS index stay consistent.
+func (s *Service) RepairMediaTitles(ctx context.Context, sink repairProgressSink, dryRun bool) (RepairSummary, error) {
+	var summary RepairSummary
+	if s.extractor == nil || s.messages == nil || s.index == nil {
+		return summary, fmt.Errorf("media title repair requires extractor, message repository, and index repository")
+	}
+	candidates, err := s.links.ListMediaTitleLabelCandidates(ctx)
+	if err != nil {
+		return summary, err
+	}
+	summary.Affected = len(candidates)
+	if sink != nil {
+		_ = sink.Progress(ctx, 0, int64(summary.Affected), fmt.Sprintf("scanned %d affected links", summary.Affected))
+	}
+
+	seen := map[int64]struct{}{}
+	msgIDs := make([]int64, 0, len(candidates))
+	for _, c := range candidates {
+		if _, ok := seen[c.MessageID]; !ok {
+			seen[c.MessageID] = struct{}{}
+			msgIDs = append(msgIDs, c.MessageID)
+		}
+	}
+	texts, err := s.messages.BatchTextByMessageIDs(ctx, msgIDs)
+	if err != nil {
+		return summary, err
+	}
+
+	byMessage := map[int64][]repository.MediaTitleCandidate{}
+	for _, c := range candidates {
+		byMessage[c.MessageID] = append(byMessage[c.MessageID], c)
+	}
+	type change struct {
+		id        int64
+		messageID int64
+		url       string
+		oldTitle  string
+		newTitle  string
+	}
+	var changes []change
+	for messageID, messageLinks := range byMessage {
+		urlToTitle := map[string]string{}
+		if text := strings.TrimSpace(texts[messageID]); text != "" {
+			for _, parsed := range s.extractor.Extract(text) {
+				if parsed.URL != "" {
+					urlToTitle[parsed.URL] = parsed.MediaTitle
+				}
+			}
+		}
+		for _, candidate := range messageLinks {
+			newTitle := urlToTitle[candidate.URL]
+			if newTitle == "" || newTitle == candidate.MediaTitle {
+				summary.Unchanged++
+				continue
+			}
+			changes = append(changes, change{
+				id: candidate.ID, messageID: candidate.MessageID,
+				url: candidate.URL, oldTitle: candidate.MediaTitle, newTitle: newTitle,
+			})
+		}
+	}
+
+	if dryRun {
+		summary.Changed = len(changes)
+		if sink != nil {
+			_ = sink.Progress(ctx, int64(summary.Changed), int64(summary.Affected),
+				fmt.Sprintf("dry-run: would repair %d of %d titles", summary.Changed, summary.Affected))
+		}
+		return summary, nil
+	}
+
+	if sink != nil {
+		_ = sink.Progress(ctx, 0, int64(len(changes)), fmt.Sprintf("applying %d title updates", len(changes)))
+	}
+	for _, c := range changes {
+		if err := s.links.UpdateMediaTitle(ctx, c.id, c.newTitle); err != nil {
+			return summary, err
+		}
+		s.logger.Info("repaired media title",
+			zap.Int64("link_id", c.id),
+			zap.Int64("message_id", c.messageID),
+			zap.String("url", c.url),
+			zap.String("old", c.oldTitle),
+			zap.String("new", c.newTitle),
+		)
+	}
+	summary.Changed = len(changes)
+
+	changedSeen := map[int64]struct{}{}
+	changedMsgIDs := make([]int64, 0, len(changes))
+	for _, c := range changes {
+		if _, ok := changedSeen[c.messageID]; !ok {
+			changedSeen[c.messageID] = struct{}{}
+			changedMsgIDs = append(changedMsgIDs, c.messageID)
+		}
+	}
+	if err := s.index.RefreshMessages(ctx, changedMsgIDs); err != nil {
+		return summary, fmt.Errorf("refresh resource_index: %w", err)
+	}
+	summary.RefreshedMessages = len(changedMsgIDs)
+	if sink != nil {
+		_ = sink.Progress(ctx, int64(summary.Changed), int64(summary.Affected),
+			fmt.Sprintf("repaired %d of %d titles", summary.Changed, summary.Affected))
+	}
+	return summary, nil
+}
+
+// RunRepairMediaTitleTask is the task-system handler for media-title repair.
+// It decodes an optional RepairMediaTitlePayload and delegates to
+// RepairMediaTitles.
+func (s *Service) RunRepairMediaTitleTask(ctx context.Context, item model.Task, progress task.ProgressSink) error {
+	var payload task.RepairMediaTitlePayload
+	if item.PayloadJSON != "" {
+		_ = json.Unmarshal([]byte(item.PayloadJSON), &payload)
+	}
+	if _, err := s.RepairMediaTitles(ctx, progress, payload.DryRun); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *Service) indexedList(ctx context.Context, query Query) (ListResult, bool, error) {

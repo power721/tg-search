@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -488,6 +489,34 @@ func addExternalResourceFilter(filters *[]externalResourceFilter, seen map[strin
 	*filters = append(*filters, filter)
 }
 
+type externalResourceMediaRef struct {
+	ChannelID int64
+	MessageID int64
+}
+
+func externalResourceMediaRefs(items []resource.Item, includeImage bool) []externalResourceMediaRef {
+	if !includeImage {
+		return nil
+	}
+	refs := make([]externalResourceMediaRef, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		if item.Kind == "file" || item.ChannelID <= 0 || item.TelegramMessageID <= 0 {
+			continue
+		}
+		key := fmt.Sprintf("%d:%d", item.ChannelID, item.TelegramMessageID)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		refs = append(refs, externalResourceMediaRef{
+			ChannelID: item.ChannelID,
+			MessageID: item.TelegramMessageID,
+		})
+	}
+	return refs
+}
+
 func isCloudDriveProvider(value string) bool {
 	switch value {
 	case "quark", "baidu", "aliyun", "uc", "xunlei", "tianyi", "115", "mobile", "pikpak", "123", "guangya", "weiyun", "lanzou", "jianguoyun":
@@ -498,22 +527,71 @@ func isCloudDriveProvider(value string) bool {
 }
 
 func (h handlers) attachMediaToExternalResourceItems(ctx context.Context, items []resource.Item, signed bool, includeImage bool) ([]resource.Item, error) {
-	for i := range items {
-		if items[i].Kind != "file" && !includeImage {
-			continue
+	refs := externalResourceMediaRefs(items, includeImage)
+	filesByRef := map[string][]model.File{}
+	if len(refs) > 0 && h.deps.Files != nil {
+		repoRefs := make([]struct{ ChannelID, MessageID int64 }, len(refs))
+		for i, ref := range refs {
+			repoRefs[i] = struct{ ChannelID, MessageID int64 }{
+				ChannelID: ref.ChannelID,
+				MessageID: ref.MessageID,
+			}
 		}
-		media, err := h.resourceItemMedia(ctx, items[i], signed)
+		found, err := h.deps.Files.FindByMessageRefs(ctx, repoRefs)
+		if err != nil {
+			return nil, err
+		}
+		filesByRef = found
+	}
+
+	type mediaIDs struct {
+		image int64
+		video int64
+	}
+	planned := make([]mediaIDs, len(items))
+	hasMedia := false
+	for i, item := range items {
+		var files []model.File
+		if item.Kind == "file" {
+			files = []model.File{{
+				TelegramFileID: item.TelegramFileID,
+				FileName:       item.FileName,
+				Extension:      item.Extension,
+				MimeType:       item.MimeType,
+				SizeBytes:      item.SizeBytes,
+				Category:       item.Category,
+			}}
+		} else if includeImage {
+			files = filesByRef[fmt.Sprintf("%d:%d", item.ChannelID, item.TelegramMessageID)]
+		}
+
+		imageFileID, videoFileID := mediaFileIDs(item.MessageType, files)
+		if !includeImage {
+			imageFileID = 0
+		}
+		if item.Kind != "file" {
+			videoFileID = 0
+		}
+		planned[i] = mediaIDs{image: imageFileID, video: videoFileID}
+		hasMedia = hasMedia || imageFileID > 0 || videoFileID > 0
+	}
+	if !hasMedia {
+		return items, nil
+	}
+
+	signer, err := h.requestMediaURLSigner(ctx, signed)
+	if err != nil {
+		return nil, err
+	}
+	for i, ids := range planned {
+		media, err := signer.mediaURLs(ids.image, ids.video)
 		if err != nil {
 			return nil, err
 		}
 		if media == nil {
 			continue
 		}
-		imageURL := ""
-		if includeImage {
-			imageURL = media.ImageURL
-		}
-		items[i].SetMediaURLs(imageURL, media.VideoURL)
+		items[i].SetMediaURLs(media.ImageURL, media.VideoURL)
 	}
 	return items, nil
 }

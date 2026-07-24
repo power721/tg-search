@@ -782,8 +782,14 @@ func mediaMetadataFromSameLinePrefix(text string, linkStart int) mediaMetadata {
 	if idx := firstLabelSeparator(prefix); idx >= 0 {
 		head := strings.TrimSpace(prefix[:idx])
 		tail := strings.TrimSpace(prefix[idx+separatorLen(prefix[idx:]):])
-		if isLinkLabel(head) {
+		switch {
+		case isLinkLabel(head):
 			prefix = tail
+		case tail == "":
+			// "<label>：" immediately followed by the URL is a provider or channel
+			// label (e.g. 光鸭, 夸克), not a media title. It is already captured as
+			// the link note; do not let it overwrite the message header title.
+			return mediaMetadata{}
 		}
 	}
 	prefix = cleanNoteCandidate(prefix)

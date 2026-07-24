@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Task } from '@/api/types'
+import { taskTypeLabel } from '@/utils/taskLabels'
 
 type TaskSortKey = 'id' | 'type' | 'status' | 'progress' | 'retry_count' | 'created_at' | 'next_run_at' | 'message'
 type SortDirection = 'asc' | 'desc'
@@ -37,20 +38,6 @@ function formatDate(value?: string) {
     dateStyle: 'medium',
     timeStyle: 'medium'
   }).format(date)
-}
-
-function taskTypeLabel(type: string) {
-  const labels: Record<string, string> = {
-    backup: '备份',
-    channel_analysis: '频道分析',
-    gap_recovery: '消息同步',
-    history_sync: '历史同步',
-    listener_recovery: '监听恢复',
-    metadata_sync: '元数据同步',
-    remote_search: '远程搜索',
-    web_access_detection: '网页访问检测'
-  }
-  return labels[type] ?? type
 }
 
 function statusLabel(status: string) {

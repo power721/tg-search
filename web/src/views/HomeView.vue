@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useResourcesStore } from '@/stores/resources'
 import { useStatusStore } from '@/stores/status'
 import { useTasksStore } from '@/stores/tasks'
+import { taskTypeLabel } from '@/utils/taskLabels'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -56,16 +57,6 @@ function formatBytes(value = 0) {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)} MB`
   if (value >= 1_000) return `${(value / 1_000).toFixed(1)} KB`
   return `${value} B`
-}
-
-function taskTypeLabel(type: string) {
-  const labels: Record<string, string> = {
-    history_sync: '历史同步',
-    web_access_detection: '网页访问检测',
-    metadata_sync: '元数据同步',
-    cleanup: '清理'
-  }
-  return labels[type] ?? type
 }
 
 function linkTypeLabel(type: string) {

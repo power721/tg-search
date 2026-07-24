@@ -49,6 +49,7 @@ const typeOptions = [
   { label: '监听恢复', value: 'listener_recovery' },
   { label: '元数据同步', value: 'metadata_sync' },
   { label: '远程搜索', value: 'remote_search' },
+  { label: '媒体标题修复', value: 'repair_media_title' },
   { label: '网页访问检测', value: 'web_access_detection' }
 ]
 

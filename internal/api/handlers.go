@@ -3035,6 +3035,29 @@ func (h handlers) rebuildResourceIndex(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"rebuilt": true, "indexed_rows": stats.IndexedRows, "updated_at": stats.UpdatedAt})
 }
 
+func (h handlers) repairMediaTitle(c *gin.Context) {
+	if h.deps.Resources == nil {
+		errorText(c, http.StatusServiceUnavailable, "resources are unavailable")
+		return
+	}
+	var body struct {
+		DryRun bool `json:"dry_run"`
+	}
+	_ = c.ShouldBindJSON(&body)
+	task, err := h.deps.Tasks.Enqueue(c.Request.Context(), model.TaskTypeRepairMediaTitle, taskpkg.RepairMediaTitlePayload{DryRun: body.DryRun})
+	if err != nil {
+		errorJSON(c, http.StatusInternalServerError, err)
+		return
+	}
+	h.publishEvent(taskpkg.Event{Type: taskpkg.EventTaskUpdated, Payload: localizeTask(task)})
+	c.JSON(http.StatusAccepted, gin.H{
+		"task_id": task.ID,
+		"job_id":  strconv.FormatInt(task.ID, 10),
+		"status":  task.Status,
+		"task":    localizeTask(task),
+	})
+}
+
 func (h handlers) updateAccountProfile(c *gin.Context, account model.Account, profile telegram.Profile) {
 	account.TelegramUserID = profile.TelegramUserID
 	if profile.Phone != "" {

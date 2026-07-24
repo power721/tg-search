@@ -164,6 +164,56 @@ WHERE id = ?`,
 	return requireRows(res, "link not found")
 }
 
+// UpdateMediaTitle updates only media_title for a link by id.
+func (r *LinkRepository) UpdateMediaTitle(ctx context.Context, id int64, title string) error {
+	if _, err := r.db.ExecContext(ctx, `UPDATE telegram_links SET media_title = ? WHERE id = ?`, title, id); err != nil {
+		return fmt.Errorf("update link media title: %w", err)
+	}
+	return nil
+}
+
+// MediaTitleCandidate is a link row whose media_title may have been clobbered by
+// a provider label, along with the data needed to re-derive the real title.
+type MediaTitleCandidate struct {
+	ID         int64
+	MessageID  int64
+	URL        string
+	MediaTitle string
+	Note       string
+}
+
+// ListMediaTitleLabelCandidates returns link rows exhibiting the provider-label
+// bug signature: media_title is non-empty, equals the link note, and the URL's
+// own line (source_snippet) begins with "<media_title><:>". This excludes
+// correctly-titled rows whose title merely coincides with the note (their
+// snippet starts with a generic label like 链接：/夸克：).
+func (r *LinkRepository) ListMediaTitleLabelCandidates(ctx context.Context) ([]MediaTitleCandidate, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT l.id, l.message_id, l.url, COALESCE(l.media_title, ''), COALESCE(l.note, '')
+FROM telegram_links l
+JOIN telegram_messages m ON m.id = l.message_id
+WHERE m.deleted = 0
+  AND l.media_title = l.note
+  AND l.media_title <> ''
+  AND length(l.source_snippet) > length(l.media_title)
+  AND substr(l.source_snippet, 1, length(l.media_title)) = l.media_title
+  AND substr(l.source_snippet, length(l.media_title) + 1, 1) IN ('：', ':')
+ORDER BY l.message_id, l.id`)
+	if err != nil {
+		return nil, fmt.Errorf("list media-title label candidates: %w", err)
+	}
+	defer rows.Close()
+	var out []MediaTitleCandidate
+	for rows.Next() {
+		var c MediaTitleCandidate
+		if err := rows.Scan(&c.ID, &c.MessageID, &c.URL, &c.MediaTitle, &c.Note); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 func (r *LinkRepository) Search(ctx context.Context, params LinkSearchParams) ([]model.LinkResult, error) {
 	limit := clampLimit(params.Limit, 50)
 	where, args := linkSearchWhere(params)

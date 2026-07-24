@@ -577,6 +577,40 @@ https://pan.baidu.com/s/10dWJ_mLAqiBruTnSxFjrow?pwd=1111`
 	}
 }
 
+func TestExtractMediaMetadataKeepsHeaderTitleWithProviderLabelOnLinkLine(t *testing.T) {
+	text := `🗄 速度与激情9 F9: The Fast Saga (2021)【4K SDR 无损超清】
+
+📜介绍：
+"唐老大"多姆·托莱多（范·迪塞尔 饰）与莱蒂（米歇尔·罗德里格兹 饰）和他的儿子小布莱恩，过上了远离纷扰的平静生活。
+
+链接
+光鸭：https://www.guangyapan.com/s/1927300986124070927_alzQ-sdmlFrewcK7
+
+📁 大小：N
+🏷 标签：#速度与激情9 #leoziyuan #F9狂野时速(港)#玩命关头9#动作#犯罪`
+
+	links := NewExtractor().Extract(text)
+	if len(links) != 1 {
+		t.Fatalf("len = %d, want 1: %+v", len(links), links)
+	}
+	link := links[0]
+	if link.Type != "guangya" || link.URL != "https://www.guangyapan.com/s/1927300986124070927_alzQ-sdmlFrewcK7" {
+		t.Fatalf("link = %+v, want guangya URL", link)
+	}
+	if link.MediaTitle != "速度与激情9 F9: The Fast Saga" {
+		t.Fatalf("media title = %q, want title from 🗄 header line, not provider label", link.MediaTitle)
+	}
+	if link.Note != "光鸭" {
+		t.Fatalf("note = %q, want provider label 光鸭", link.Note)
+	}
+	if link.MediaYear != "2021" || link.MediaQuality != "4K SDR" {
+		t.Fatalf("metadata = %+v, want year 2021 and quality 4K SDR from header line", link)
+	}
+	if link.MediaTags != "速度与激情9 leoziyuan F9狂野时速(港) 玩命关头9 动作 犯罪" {
+		t.Fatalf("tags = %q, want tags from 🏷 line", link.MediaTags)
+	}
+}
+
 func TestExtractMediaMetadataFromOneMessageMultipleTianyiTitles(t *testing.T) {
 	text := `日剧分享六
 麻烦一族.Involvement in Family Affairs.(2022) {tmdb-158896}

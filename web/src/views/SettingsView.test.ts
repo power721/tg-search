@@ -9,11 +9,16 @@ const messageMocks = vi.hoisted(() => ({
   success: vi.fn()
 }))
 
+const dialogMocks = vi.hoisted(() => ({
+  warning: vi.fn()
+}))
+
 vi.mock('naive-ui', async () => {
   const actual = await vi.importActual<typeof import('naive-ui')>('naive-ui')
   return {
     ...actual,
-    useMessage: () => messageMocks
+    useMessage: () => messageMocks,
+    useDialog: () => dialogMocks
   }
 })
 
@@ -1052,5 +1057,21 @@ describe('SettingsView', () => {
     expect(wrapper.get<HTMLInputElement>('[data-testid="telegram-app-id-input"]').element.value).toBe('')
     expect(wrapper.get<HTMLInputElement>('[data-testid="telegram-app-hash-input"]').element.placeholder).toBe('请输入 App Hash')
     expect(wrapper.text()).not.toContain('26375241')
+  })
+
+  it('enqueues a media-title repair task from the system tab', async () => {
+    vi.mocked(apiPost).mockResolvedValueOnce({ task_id: 42, status: 'queued' })
+    const wrapper = mount(SettingsView, { global: { stubs } })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="repair-media-title"]').trigger('click')
+    expect(dialogMocks.warning).toHaveBeenCalledTimes(1)
+    const options = dialogMocks.warning.mock.calls[0][0] as { title: string; onPositiveClick: () => Promise<void> }
+    expect(options.title).toBe('修复媒体标题')
+    await options.onPositiveClick()
+    await flushPromises()
+
+    expect(apiPost).toHaveBeenCalledWith('/api/maintenance/media-title/repair')
+    expect(messageMocks.success).toHaveBeenCalledWith(expect.stringContaining('修复任务已开始'))
   })
 })

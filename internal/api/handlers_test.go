@@ -1578,6 +1578,133 @@ func TestExternalSearchUsesIndexedQueryForDefaultCloudTypes(t *testing.T) {
 	}
 }
 
+func TestExternalResourceMediaRefsDeduplicateEligibleLinks(t *testing.T) {
+	items := []resource.Item{
+		{ID: "link:1", Kind: "link", ChannelID: 7, TelegramMessageID: 11},
+		{ID: "link:2", Kind: "link", ChannelID: 7, TelegramMessageID: 11},
+		{ID: "link:3", Kind: "link", ChannelID: 7, TelegramMessageID: 12},
+		{ID: "file:4", Kind: "file", ChannelID: 7, TelegramMessageID: 13, TelegramFileID: 99},
+		{ID: "invalid", Kind: "link"},
+	}
+
+	refs := externalResourceMediaRefs(items, true)
+	if len(refs) != 2 {
+		t.Fatalf("refs = %+v, want two deduplicated link references", refs)
+	}
+	if refs[0].ChannelID != 7 || refs[0].MessageID != 11 ||
+		refs[1].ChannelID != 7 || refs[1].MessageID != 12 {
+		t.Fatalf("refs = %+v, want message references 7:11 and 7:12", refs)
+	}
+	if got := externalResourceMediaRefs(items, false); len(got) != 0 {
+		t.Fatalf("image-disabled refs = %+v, want none", got)
+	}
+}
+
+func TestExternalSearchReturnsMultipleSignedImages(t *testing.T) {
+	ctx := context.Background()
+	deps := testDeps(t)
+	deps.APIKeyService = apikey.NewService(deps.APIKeys, deps.Settings)
+	index := repository.NewResourceIndexRepository(deps.BackupDB)
+	deps.Resources = resource.NewService(
+		deps.Links,
+		deps.Files,
+		repository.NewResourceStatsRepository(deps.BackupDB),
+		index,
+	)
+
+	accountID, err := deps.Accounts.Save(ctx, model.Account{
+		Phone:    "+10000000000",
+		Username: "main",
+		Status:   model.AccountStatusOnline,
+	})
+	if err != nil {
+		t.Fatalf("save account: %v", err)
+	}
+	channelID, err := deps.Channels.Save(ctx, model.Channel{
+		AccountID:         accountID,
+		TelegramChannelID: 1,
+		Title:             "Mobile Resources",
+		Type:              model.ChannelTypeChannel,
+	})
+	if err != nil {
+		t.Fatalf("save channel: %v", err)
+	}
+
+	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
+	messages := make([]model.Message, 3)
+	for i := range messages {
+		messages[i] = model.Message{
+			AccountID:         accountID,
+			ChannelID:         channelID,
+			TelegramMessageID: int64(i + 1),
+			Text:              "mobile resource " + strconv.Itoa(i),
+			RawJSON:           "{}",
+			Date:              now.Add(-time.Duration(i) * time.Minute),
+		}
+	}
+	stored, err := deps.Messages.SaveBatch(ctx, messages)
+	if err != nil {
+		t.Fatalf("save messages: %v", err)
+	}
+	for i, message := range stored {
+		if _, err := deps.Links.SaveBatch(ctx, message.ID, []model.Link{{
+			Type:     "mobile",
+			Category: "cloud_drive",
+			URL:      "https://yun.139.com/share/item-" + strconv.Itoa(i),
+			Note:     "mobile item " + strconv.Itoa(i),
+		}}); err != nil {
+			t.Fatalf("save link %d: %v", i, err)
+		}
+		if _, err := deps.Files.SaveBatch(ctx, message.ID, []model.File{{
+			TelegramFileID: int64(9000 + i),
+			FileName:       "poster-" + strconv.Itoa(i) + ".jpg",
+			Extension:      ".jpg",
+			MimeType:       "image/jpeg",
+			Category:       "image",
+		}}); err != nil {
+			t.Fatalf("save image %d: %v", i, err)
+		}
+	}
+	if err := index.Rebuild(ctx); err != nil {
+		t.Fatalf("rebuild resource index: %v", err)
+	}
+
+	router := NewRouter(deps)
+	key := createTestAPIKey(t, router)
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/search?cloud_types=mobile&limit=3&include_image=true",
+		nil,
+	)
+	request.Header.Set("X-API-Key", key)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", response.Code, response.Body.String())
+	}
+
+	var body struct {
+		Data struct {
+			MergedByType map[string][]struct {
+				Images []string `json:"images"`
+			} `json:"merged_by_type"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	mobile := body.Data.MergedByType["mobile"]
+	if len(mobile) != 3 {
+		t.Fatalf("mobile results = %+v, want three", mobile)
+	}
+	for i, item := range mobile {
+		if len(item.Images) != 1 || !strings.HasPrefix(item.Images[0], "/i/") {
+			t.Fatalf("mobile result %d images = %+v, want one signed image", i, item.Images)
+		}
+		assertSignedMediaURL(t, deps.APIKeyService, item.Images[0])
+	}
+}
+
 func TestExternalSearchWritesAccessLog(t *testing.T) {
 	core, observed := observer.New(zapcore.DebugLevel)
 	deps := testDeps(t)
@@ -4557,6 +4684,38 @@ func TestResourceIndexMaintenanceRebuild(t *testing.T) {
 	}
 }
 
+func TestRepairMediaTitleEnqueuesTask(t *testing.T) {
+	deps := testDeps(t)
+	router := NewRouter(deps)
+	req := httptest.NewRequest(http.MethodPost, "/api/maintenance/media-title/repair", strings.NewReader(`{}`))
+	withAdminSession(t, deps, req)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body=%s, want 202", w.Code, w.Body.String())
+	}
+	var resp struct {
+		TaskID int64  `json:"task_id"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil || resp.TaskID == 0 {
+		t.Fatalf("response = %s, want task_id: %v", w.Body.String(), err)
+	}
+}
+
+func TestRepairMediaTitleUnavailableWithoutResources(t *testing.T) {
+	deps := testDeps(t)
+	deps.Resources = nil
+	router := NewRouter(deps)
+	req := httptest.NewRequest(http.MethodPost, "/api/maintenance/media-title/repair", nil)
+	withAdminSession(t, deps, req)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d body=%s, want 503", w.Code, w.Body.String())
+	}
+}
+
 func TestBatchSyncAPIValidatesChannelIDs(t *testing.T) {
 	deps := testDeps(t)
 	router := NewRouter(deps)
@@ -5656,7 +5815,7 @@ func (f *apiRemoteSearchClient) SearchMessages(ctx context.Context, account tele
 	return f.items, nil
 }
 
-func testDeps(t *testing.T) Dependencies {
+func testDeps(t testing.TB) Dependencies {
 	t.Helper()
 	deps, _ := testDepsWithDB(t)
 	return deps
@@ -5675,7 +5834,7 @@ func errorMessage(t *testing.T, data []byte) string {
 	return body.Error.Message
 }
 
-func testDepsWithDB(t *testing.T) (Dependencies, *sql.DB) {
+func testDepsWithDB(t testing.TB) (Dependencies, *sql.DB) {
 	t.Helper()
 	root := t.TempDir()
 	runtimeConfig := config.Config{Storage: config.StorageConfig{Path: root, MaxDBSize: config.Size(10), MaxMediaCache: config.Size(20)}}
