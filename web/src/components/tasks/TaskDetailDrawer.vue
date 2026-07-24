@@ -22,6 +22,7 @@ function taskTypeLabel(type: string) {
     listener_recovery: '监听恢复',
     metadata_sync: '元数据同步',
     remote_search: '远程搜索',
+    repair_media_title: '媒体标题修复',
     web_access_detection: '网页访问检测'
   }
   return labels[type] ?? type

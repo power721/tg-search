@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"go.uber.org/zap"
+
 	"tg-search/internal/link"
 	"tg-search/internal/model"
 	"tg-search/internal/repository"
@@ -152,12 +154,13 @@ type Service struct {
 	index     *repository.ResourceIndexRepository
 	messages  *repository.MessageRepository
 	extractor *link.Extractor
+	logger    *zap.Logger
 }
 
 var ErrInvalidResourceID = errors.New("invalid resource id")
 
 func NewService(links *repository.LinkRepository, files *repository.FileRepository, extras ...any) *Service {
-	service := &Service{links: links, files: files}
+	service := &Service{links: links, files: files, logger: zap.NewNop()}
 	for _, extra := range extras {
 		switch value := extra.(type) {
 		case *repository.ResourceStatsRepository:
@@ -168,6 +171,8 @@ func NewService(links *repository.LinkRepository, files *repository.FileReposito
 			service.messages = value
 		case *link.Extractor:
 			service.extractor = value
+		case *zap.Logger:
+			service.logger = value
 		}
 	}
 	return service
@@ -228,7 +233,9 @@ func (s *Service) RepairMediaTitles(ctx context.Context, sink repairProgressSink
 	type change struct {
 		id        int64
 		messageID int64
-		title     string
+		url       string
+		oldTitle  string
+		newTitle  string
 	}
 	var changes []change
 	for messageID, messageLinks := range byMessage {
@@ -246,7 +253,10 @@ func (s *Service) RepairMediaTitles(ctx context.Context, sink repairProgressSink
 				summary.Unchanged++
 				continue
 			}
-			changes = append(changes, change{candidate.ID, candidate.MessageID, newTitle})
+			changes = append(changes, change{
+				id: candidate.ID, messageID: candidate.MessageID,
+				url: candidate.URL, oldTitle: candidate.MediaTitle, newTitle: newTitle,
+			})
 		}
 	}
 
@@ -263,9 +273,16 @@ func (s *Service) RepairMediaTitles(ctx context.Context, sink repairProgressSink
 		_ = sink.Progress(ctx, 0, int64(len(changes)), fmt.Sprintf("applying %d title updates", len(changes)))
 	}
 	for _, c := range changes {
-		if err := s.links.UpdateMediaTitle(ctx, c.id, c.title); err != nil {
+		if err := s.links.UpdateMediaTitle(ctx, c.id, c.newTitle); err != nil {
 			return summary, err
 		}
+		s.logger.Info("repaired media title",
+			zap.Int64("link_id", c.id),
+			zap.Int64("message_id", c.messageID),
+			zap.String("url", c.url),
+			zap.String("old", c.oldTitle),
+			zap.String("new", c.newTitle),
+		)
 	}
 	summary.Changed = len(changes)
 

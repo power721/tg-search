@@ -63,6 +63,7 @@ function taskTypeLabel(type: string) {
     history_sync: '历史同步',
     web_access_detection: '网页访问检测',
     metadata_sync: '元数据同步',
+    repair_media_title: '媒体标题修复',
     cleanup: '清理'
   }
   return labels[type] ?? type

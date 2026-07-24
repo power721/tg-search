@@ -147,7 +147,7 @@ func run(configPath string) error {
 		Telegram:    tgClient,
 		Logger:      logs.App,
 	})
-	resourceService := resource.NewService(links, files, resourceStats, resourceIndex, messages, link.NewExtractor())
+	resourceService := resource.NewService(links, files, resourceStats, resourceIndex, messages, link.NewExtractor(), logs.App)
 	if stats, err := resourceService.IndexStats(ctx); err == nil && stats.IndexedRows == 0 {
 		if err := resourceService.RebuildIndex(ctx); err != nil {
 			logs.App.Warn("resource index rebuild failed", zap.Error(err))
