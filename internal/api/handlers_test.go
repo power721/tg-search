@@ -4684,6 +4684,38 @@ func TestResourceIndexMaintenanceRebuild(t *testing.T) {
 	}
 }
 
+func TestRepairMediaTitleEnqueuesTask(t *testing.T) {
+	deps := testDeps(t)
+	router := NewRouter(deps)
+	req := httptest.NewRequest(http.MethodPost, "/api/maintenance/media-title/repair", strings.NewReader(`{}`))
+	withAdminSession(t, deps, req)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body=%s, want 202", w.Code, w.Body.String())
+	}
+	var resp struct {
+		TaskID int64  `json:"task_id"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil || resp.TaskID == 0 {
+		t.Fatalf("response = %s, want task_id: %v", w.Body.String(), err)
+	}
+}
+
+func TestRepairMediaTitleUnavailableWithoutResources(t *testing.T) {
+	deps := testDeps(t)
+	deps.Resources = nil
+	router := NewRouter(deps)
+	req := httptest.NewRequest(http.MethodPost, "/api/maintenance/media-title/repair", nil)
+	withAdminSession(t, deps, req)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d body=%s, want 503", w.Code, w.Body.String())
+	}
+}
+
 func TestBatchSyncAPIValidatesChannelIDs(t *testing.T) {
 	deps := testDeps(t)
 	router := NewRouter(deps)
