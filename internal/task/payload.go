@@ -18,3 +18,7 @@ type HistorySyncPayload struct {
 type AIMediaMetadataPayload struct {
 	MessageID int64 `json:"message_id"`
 }
+
+type RepairMediaTitlePayload struct {
+	DryRun bool `json:"dry_run"`
+}

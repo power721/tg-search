@@ -147,7 +147,7 @@ func run(configPath string) error {
 		Telegram:    tgClient,
 		Logger:      logs.App,
 	})
-	resourceService := resource.NewService(links, files, resourceStats, resourceIndex)
+	resourceService := resource.NewService(links, files, resourceStats, resourceIndex, messages, link.NewExtractor())
 	if stats, err := resourceService.IndexStats(ctx); err == nil && stats.IndexedRows == 0 {
 		if err := resourceService.RebuildIndex(ctx); err != nil {
 			logs.App.Warn("resource index rebuild failed", zap.Error(err))
@@ -226,9 +226,10 @@ func run(configPath string) error {
 		Repository: taskRepository,
 		Events:     eventBroker,
 		Handlers: map[string]taskpkg.Handler{
-			model.TaskTypeGapRecovery:     historyService.RunGapRecoveryTask,
-			model.TaskTypeHistorySync:     historyService.RunHistorySyncTask,
-			model.TaskTypeAIMediaMetadata: aiService.RunMediaMetadataTask,
+			model.TaskTypeGapRecovery:      historyService.RunGapRecoveryTask,
+			model.TaskTypeHistorySync:      historyService.RunHistorySyncTask,
+			model.TaskTypeAIMediaMetadata:  aiService.RunMediaMetadataTask,
+			model.TaskTypeRepairMediaTitle: resourceService.RunRepairMediaTitleTask,
 		},
 		PollInterval: 2 * time.Second,
 	})

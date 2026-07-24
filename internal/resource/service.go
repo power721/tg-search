@@ -3,6 +3,7 @@ package resource
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -14,6 +15,7 @@ import (
 	"tg-search/internal/model"
 	"tg-search/internal/repository"
 	"tg-search/internal/searchrank"
+	"tg-search/internal/task"
 )
 
 type Query struct {
@@ -284,6 +286,20 @@ func (s *Service) RepairMediaTitles(ctx context.Context, sink repairProgressSink
 			fmt.Sprintf("repaired %d of %d titles", summary.Changed, summary.Affected))
 	}
 	return summary, nil
+}
+
+// RunRepairMediaTitleTask is the task-system handler for media-title repair.
+// It decodes an optional RepairMediaTitlePayload and delegates to
+// RepairMediaTitles.
+func (s *Service) RunRepairMediaTitleTask(ctx context.Context, item model.Task, progress task.ProgressSink) error {
+	var payload task.RepairMediaTitlePayload
+	if item.PayloadJSON != "" {
+		_ = json.Unmarshal([]byte(item.PayloadJSON), &payload)
+	}
+	if _, err := s.RepairMediaTitles(ctx, progress, payload.DryRun); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *Service) indexedList(ctx context.Context, query Query) (ListResult, bool, error) {
