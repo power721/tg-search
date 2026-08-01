@@ -300,14 +300,12 @@ func (c *HTTPChecker) check123(ctx context.Context, item Item) Result {
 	if shareKey == "" {
 		return resultFor(item, StateUncertain, "无法解析分享地址")
 	}
-	// 123pan now serves the share/info API on the link's own host (the per-user
-	// <id>.share.123pan.cn subdomain or www.123912.com); www.123pan.com is a dead
-	// SPA catch-all that 404s every /api path. Derive the API base from the URL.
-	apiBase := "https://www.123912.com"
-	if parsed, err := url.Parse(item.URL); err == nil && parsed.Scheme != "" && parsed.Host != "" {
-		apiBase = parsed.Scheme + "://" + parsed.Host
-	}
-	body, status, err := c.request(ctx, http.MethodGet, apiBase+"/api/share/info?shareKey="+url.QueryEscape(shareKey), nil, nil)
+	// The share/info API resolves by shareKey globally, so every link hits one
+	// canonical host regardless of its per-user <id>.share.123pan.cn subdomain.
+	// Collapsing onto a single host lets a batch reuse connections (HTTP/2
+	// multiplexing) instead of paying a cold DNS+TLS handshake per subdomain,
+	// which turned 30 links into ~4.5s.
+	body, status, err := c.request(ctx, http.MethodGet, pan123ShareInfoAPI+"?shareKey="+url.QueryEscape(shareKey), nil, nil)
 	if err != nil {
 		return requestFailure(ctx, item)
 	}
@@ -580,6 +578,11 @@ var xunleiCaptchaAlgorithms = []string{
 var (
 	xunleiShareHost      = "https://api-pan.xunlei.com"
 	xunleiCaptchaInitURL = "https://xluser-ssl.xunlei.com/v1/shield/captcha/init"
+
+	// pan123ShareInfoAPI is the single canonical host for the share/info lookup;
+	// tests override it to point at a local httptest server. yun.123pan.com measured
+	// fastest (~185ms) of the live 123pan domains; www.123pan.com/.cn are dead SPAs.
+	pan123ShareInfoAPI = "https://yun.123pan.com/api/share/info"
 )
 
 func (c *HTTPChecker) check115(ctx context.Context, item Item) Result {
