@@ -13,11 +13,29 @@ import (
 )
 
 type ResourceIndexRepository struct {
-	db *sql.DB
+	db     *sql.DB
+	readDB *sql.DB
 }
 
 func NewResourceIndexRepository(db *sql.DB) *ResourceIndexRepository {
-	return &ResourceIndexRepository{db: db}
+	return &ResourceIndexRepository{db: db, readDB: db}
+}
+
+// WithReadDB routes read-only queries (List, Stats) to a separate connection
+// pool so public searches do not queue behind index refresh writes on the
+// single writer connection. Falls back to the writer pool when nil.
+func (r *ResourceIndexRepository) WithReadDB(readDB *sql.DB) *ResourceIndexRepository {
+	if readDB != nil {
+		r.readDB = readDB
+	}
+	return r
+}
+
+func (r *ResourceIndexRepository) readConn() *sql.DB {
+	if r.readDB != nil {
+		return r.readDB
+	}
+	return r.db
 }
 
 func (r *ResourceIndexRepository) Rebuild(ctx context.Context) error {
@@ -69,7 +87,7 @@ func (r *ResourceIndexRepository) DeleteMessage(ctx context.Context, messageID i
 func (r *ResourceIndexRepository) Stats(ctx context.Context) (model.ResourceIndexStats, error) {
 	var stats model.ResourceIndexStats
 	var updatedAt string
-	err := r.db.QueryRowContext(ctx, `
+	err := r.readConn().QueryRowContext(ctx, `
 SELECT count(*), COALESCE(max(updated_at), '0001-01-01T00:00:00Z')
 FROM resource_index`).Scan(&stats.IndexedRows, &updatedAt)
 	if err != nil {
@@ -565,7 +583,7 @@ func (r *ResourceIndexRepository) count(ctx context.Context, where []string, arg
 	}
 	query += ` WHERE ` + strings.Join(where, " AND ")
 	var total int
-	if err := r.db.QueryRowContext(ctx, query, args...).Scan(&total); err != nil {
+	if err := r.readConn().QueryRowContext(ctx, query, args...).Scan(&total); err != nil {
 		return 0, fmt.Errorf("count resource index: %w", err)
 	}
 	return total, nil
@@ -577,7 +595,7 @@ func (r *ResourceIndexRepository) grouped(ctx context.Context, where []string, a
 		query += ` JOIN resource_index_fts ON resource_index_fts.rowid = ri.id`
 	}
 	query += ` WHERE ` + strings.Join(where, " AND ") + ` GROUP BY ri.category`
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	rows, err := r.readConn().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("group resource index: %w", err)
 	}
@@ -607,7 +625,7 @@ func (r *ResourceIndexRepository) list(ctx context.Context, where []string, args
 	}
 	query += ` WHERE ` + strings.Join(where, " AND ") + ` ORDER BY ` + orderBy + ` LIMIT ? OFFSET ?`
 	listArgs := append(append([]any{}, args...), limit, offset)
-	rows, err := r.db.QueryContext(ctx, query, listArgs...)
+	rows, err := r.readConn().QueryContext(ctx, query, listArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("list resource index: %w", err)
 	}

@@ -533,6 +533,13 @@ CREATE TRIGGER IF NOT EXISTS resource_index_au AFTER UPDATE ON resource_index BE
 END;
 `,
 	},
+	{
+		version: 16,
+		name:    "resource_index_category_type_datetime",
+		sql: `
+CREATE INDEX IF NOT EXISTS idx_resource_index_category_type_datetime
+ON resource_index(category, type, datetime DESC, resource_id DESC);`,
+	},
 }
 
 func Migrate(ctx context.Context, conn *sql.DB) error {

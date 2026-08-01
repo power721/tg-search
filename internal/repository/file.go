@@ -12,11 +12,29 @@ import (
 )
 
 type FileRepository struct {
-	db *sql.DB
+	db     *sql.DB
+	readDB *sql.DB
 }
 
 func NewFileRepository(db *sql.DB) *FileRepository {
-	return &FileRepository{db: db}
+	return &FileRepository{db: db, readDB: db}
+}
+
+// WithReadDB routes read-only lookups to a separate connection pool so media
+// attachment during public searches does not queue behind writes. Falls back to
+// the writer pool when nil.
+func (r *FileRepository) WithReadDB(readDB *sql.DB) *FileRepository {
+	if readDB != nil {
+		r.readDB = readDB
+	}
+	return r
+}
+
+func (r *FileRepository) readConn() *sql.DB {
+	if r.readDB != nil {
+		return r.readDB
+	}
+	return r.db
 }
 
 func (r *FileRepository) SaveBatch(ctx context.Context, messageID int64, files []model.File) ([]model.File, error) {
@@ -101,7 +119,7 @@ func (r *FileRepository) ReplaceForMessageTx(ctx context.Context, tx *sql.Tx, me
 }
 
 func (r *FileRepository) FindByMessageID(ctx context.Context, messageID int64) ([]model.File, error) {
-	rows, err := r.db.QueryContext(ctx, `
+	rows, err := r.readConn().QueryContext(ctx, `
 SELECT id, message_id, telegram_file_id, file_name, extension, mime_type, size_bytes, category, created_at, updated_at
 FROM telegram_files
 WHERE message_id = ?
@@ -123,7 +141,7 @@ ORDER BY id`, messageID)
 }
 
 func (r *FileRepository) FindByMessageRef(ctx context.Context, channelID int64, telegramMessageID int64) ([]model.File, error) {
-	rows, err := r.db.QueryContext(ctx, `
+	rows, err := r.readConn().QueryContext(ctx, `
 SELECT f.id, f.message_id, f.telegram_file_id, f.file_name, f.extension, f.mime_type, f.size_bytes, f.category, f.created_at, f.updated_at
 FROM telegram_files f
 JOIN telegram_messages m ON m.id = f.message_id
@@ -169,7 +187,7 @@ WHERE m.deleted = 0 AND (m.channel_id, m.telegram_message_id) IN (`
 	}
 	query += ") ORDER BY m.channel_id, m.telegram_message_id, f.id"
 
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	rows, err := r.readConn().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("find files by message refs: %w", err)
 	}
