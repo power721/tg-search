@@ -126,6 +126,7 @@ func run(configPath string) error {
 	watchFilter := messagefilter.New(messagefilter.NewSettingsRuleStore(watchRules, settings))
 	taskRepository := taskpkg.NewRepository(conn)
 	taskService := taskpkg.NewService(taskRepository)
+	gapRecoveryCooldown := taskpkg.NewGapRecoveryCooldown(0)
 	eventBroker := taskpkg.NewEventBroker()
 	adminAuth := adminauth.NewService(users, adminSessions)
 	storageUsage := storage.NewUsageService(cfg)
@@ -184,6 +185,7 @@ func run(configPath string) error {
 		AIMediaMetadataTasks: taskService,
 		Extractor:            link.NewExtractor(),
 		Filter:               watchFilter,
+		GapRecoveryCooldown:  gapRecoveryCooldown,
 	})
 	updateService := updatepkg.NewService(updatepkg.ServiceOptions{
 		Accounts:    accounts,
@@ -218,6 +220,7 @@ func run(configPath string) error {
 		Settings:             settings,
 		RuntimeConfig:        cfg,
 		AIMediaMetadataTasks: taskService,
+		GapRecoveryCooldown:  gapRecoveryCooldown,
 	})
 	channelService := channel.NewService(channels, tgClient, sessions)
 	channelWebAccessService := channel.NewWebAccessService(channels, nil)

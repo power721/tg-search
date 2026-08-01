@@ -33,6 +33,7 @@ type ProcessorOptions struct {
 	Settings             *repository.SettingsRepository
 	RuntimeConfig        config.Config
 	AIMediaMetadataTasks taskEnqueuer
+	GapRecoveryCooldown  *taskpkg.GapRecoveryCooldown
 }
 
 type taskEnqueuer interface {
@@ -54,6 +55,7 @@ type Processor struct {
 	settings             *repository.SettingsRepository
 	runtimeConfig        config.Config
 	aiMediaMetadataTasks taskEnqueuer
+	gapRecoveryCooldown  *taskpkg.GapRecoveryCooldown
 }
 
 func NewProcessor(opts ProcessorOptions) *Processor {
@@ -75,6 +77,7 @@ func NewProcessor(opts ProcessorOptions) *Processor {
 		settings:             opts.Settings,
 		runtimeConfig:        opts.RuntimeConfig,
 		aiMediaMetadataTasks: opts.AIMediaMetadataTasks,
+		gapRecoveryCooldown:  opts.GapRecoveryCooldown,
 	}
 }
 
@@ -108,6 +111,13 @@ func (p *Processor) Process(ctx context.Context, event Event) error {
 
 func (p *Processor) enqueueGapRecovery(ctx context.Context, channel model.Channel, event Event) error {
 	if p.cursors == nil || p.tasks == nil || event.Type != EventNewMessage || event.MessageID <= 0 {
+		return nil
+	}
+	// Suppress re-enqueue for a channel whose last gap recovery just failed:
+	// without this, every live message on a failing channel (flaky transport,
+	// CHANNEL_PRIVATE) enqueues a fresh task that burns ~20 RPC retries before
+	// failing again. The gap is retried once the cooldown lifts.
+	if p.gapRecoveryCooldown != nil && p.gapRecoveryCooldown.IsCoolingDown(channel.ID, time.Now().UTC()) {
 		return nil
 	}
 	cursor, err := p.cursors.Find(ctx, event.AccountID, channel.ID, "history")
