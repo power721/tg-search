@@ -3,8 +3,11 @@ package linkcheck
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -329,19 +332,49 @@ func (c *HTTPChecker) checkXunlei(ctx context.Context, item Item) Result {
 		return resultFor(item, StateUncertain, "无法解析分享地址")
 	}
 	password := firstNonEmpty(item.Password, queryValue(item.URL, "pwd"))
-	apiURL := fmt.Sprintf("https://api-pan.xunlei.com/drive/v1/share?share_id=%s&pass_code=%s&limit=100&pass_code_token=&page_token=&thumbnail_size=SIZE_SMALL", url.QueryEscape(shareID), url.QueryEscape(password))
-	body, status, err := c.request(ctx, http.MethodGet, apiURL, nil, map[string]string{
-		"origin":      "https://pan.xunlei.com",
-		"referer":     "https://pan.xunlei.com/",
-		"x-client-id": "ZUBzD9J_XPXfn7f7",
-		"x-device-id": "5505bd0cab8c9469b98e5891d9fb3e0d",
-	})
+	apiURL := fmt.Sprintf("%s/drive/v1/share?share_id=%s&pass_code=%s&limit=100&pass_code_token=&page_token=&thumbnail_size=SIZE_SMALL", xunleiShareHost, url.QueryEscape(shareID), url.QueryEscape(password))
+
+	// The share API rejects anonymous lookups with captcha_invalid, so a valid
+	// captcha_token (minted via /v1/shield/captcha/init) is mandatory.
+	token, err := c.xunleiCaptchaToken(ctx)
+	if err != nil {
+		if errors.Is(err, errXunleiCaptchaRequired) {
+			return resultFor(item, StateUncertain, "需人工验证")
+		}
+		return resultFor(item, StateUncertain, "验证码获取失败")
+	}
+
+	headers := map[string]string{
+		"origin":          "https://pan.xunlei.com",
+		"referer":         "https://pan.xunlei.com/",
+		"x-client-id":     xunleiWebClientID,
+		"x-device-id":     xunleiWebDeviceID,
+		"x-captcha-token": token,
+	}
+	body, status, err := c.request(ctx, http.MethodGet, apiURL, nil, headers)
 	if err != nil {
 		return requestFailure(ctx, item)
 	}
-	if status == http.StatusForbidden || status == http.StatusNotFound {
-		return resultFor(item, StateBad, "链接失效")
+	// A token can be invalidated mid-flight; refresh once and retry.
+	if isXunleiCaptchaInvalid(body, status) {
+		if fresh, ok := c.refreshXunleiToken(ctx); ok {
+			headers["x-captcha-token"] = fresh
+			body, status, err = c.request(ctx, http.MethodGet, apiURL, nil, headers)
+			if err != nil {
+				return requestFailure(ctx, item)
+			}
+		}
+		if isXunleiCaptchaInvalid(body, status) {
+			return resultFor(item, StateUncertain, "验证码校验失败")
+		}
 	}
+	return classifyXunlei(item, body, status)
+}
+
+// classifyXunlei maps the share API response onto a check Result. The server
+// returns a share_status field for every reachable share, so that is the source
+// of truth; only responses without one fall back to the error/HTTP status.
+func classifyXunlei(item Item, body []byte, status int) Result {
 	var response struct {
 		Error           string `json:"error"`
 		ErrorMsg        string `json:"error_description"`
@@ -352,11 +385,195 @@ func (c *HTTPChecker) checkXunlei(ctx context.Context, item Item) Result {
 		ShareStatusText string `json:"share_status_text"`
 	}
 	_ = json.Unmarshal(body, &response)
-	if response.ShareStatus == "OK" || response.ShareID != "" || response.ShareName != "" || response.FileCount > 0 {
+	switch response.ShareStatus {
+	case "OK":
 		return resultFor(item, StateOK, "链接有效")
+	case "PASS_CODE_EMPTY", "PASS_CODE_ERROR":
+		return resultFor(item, StateLocked, "需要提取码")
 	}
-	return stateFromMessage(item, firstNonEmpty(response.ErrorMsg, response.ShareStatusText, response.Error, string(body)))
+	if response.ShareStatus != "" {
+		// Any other status (CANCEL/EXPIRED/BANNED/...) means the share is dead.
+		return resultFor(item, StateBad, firstNonEmpty(response.ShareStatusText, "链接失效"))
+	}
+	msg := firstNonEmpty(response.ErrorMsg, response.Error)
+	if status >= 400 && status < 500 {
+		return resultFor(item, StateBad, firstNonEmpty(msg, "链接失效"))
+	}
+	return resultFor(item, StateUncertain, firstNonEmpty(msg, "无法确认链接状态"))
 }
+
+// isXunleiCaptchaInvalid reports whether the share API rejected the request
+// because the captcha token is missing/expired (error_code 9, captcha_invalid).
+func isXunleiCaptchaInvalid(body []byte, status int) bool {
+	var response struct {
+		Error     string `json:"error"`
+		ErrorCode int    `json:"error_code"`
+	}
+	_ = json.Unmarshal(body, &response)
+	return response.Error == "captcha_invalid" || response.ErrorCode == 9
+}
+
+var (
+	errXunleiCaptchaRequired = errors.New("xunlei interactive captcha required")
+
+	// xunleiToken caches the captcha token process-wide (one init serves the
+	// whole batch and any concurrent requests within its lifetime).
+	xunleiTokenMu  sync.Mutex // guards xunleiToken / xunleiTokenExp
+	xunleiFetchMu  sync.Mutex // serializes token fetches to avoid a stampede
+	xunleiToken    string
+	xunleiTokenExp time.Time
+)
+
+// xunleiCaptchaToken returns a cached token, minting a new one when absent or
+// expired. Concurrent callers share a single fetch.
+func (c *HTTPChecker) xunleiCaptchaToken(ctx context.Context) (string, error) {
+	if tok := readXunleiToken(); tok != "" {
+		return tok, nil
+	}
+	xunleiFetchMu.Lock()
+	defer xunleiFetchMu.Unlock()
+	// Another goroutine may have refreshed the token while we waited.
+	if tok := readXunleiToken(); tok != "" {
+		return tok, nil
+	}
+	tok, ttl, err := c.fetchXunleiToken(ctx)
+	if err != nil {
+		return "", err
+	}
+	storeXunleiToken(tok, ttl)
+	return tok, nil
+}
+
+// refreshXunleiToken mints a fresh token unconditionally (used after a token is
+// rejected) and returns it.
+func (c *HTTPChecker) refreshXunleiToken(ctx context.Context) (string, bool) {
+	xunleiFetchMu.Lock()
+	defer xunleiFetchMu.Unlock()
+	tok, ttl, err := c.fetchXunleiToken(ctx)
+	if err != nil {
+		return "", false
+	}
+	storeXunleiToken(tok, ttl)
+	return tok, true
+}
+
+func readXunleiToken() string {
+	xunleiTokenMu.Lock()
+	defer xunleiTokenMu.Unlock()
+	if xunleiToken != "" && time.Now().Before(xunleiTokenExp) {
+		return xunleiToken
+	}
+	return ""
+}
+
+func storeXunleiToken(token string, ttl time.Duration) {
+	if ttl > 30*time.Second {
+		ttl -= 30 * time.Second // refresh before the real expiry
+	}
+	xunleiTokenMu.Lock()
+	xunleiToken = token
+	xunleiTokenExp = time.Now().Add(ttl)
+	xunleiTokenMu.Unlock()
+}
+
+// fetchXunleiToken mints an anonymous captcha token for the share lookup.
+func (c *HTTPChecker) fetchXunleiToken(ctx context.Context) (string, time.Duration, error) {
+	timestamp := fmt.Sprint(time.Now().UnixMilli())
+	payload := map[string]any{
+		"action":        "get:/drive/v1/share",
+		"captcha_token": "",
+		"client_id":     xunleiInitClientID,
+		"device_id":     xunleiInitDeviceID,
+		"meta": map[string]any{
+			"timestamp":      timestamp,
+			"captcha_sign":   xunleiCaptchaSign(timestamp),
+			"client_version": xunleiInitClientVersion,
+			"package_name":   xunleiInitPackageName,
+			"username":       "",
+			"phone_number":   "",
+			"email":          "",
+			"user_id":        "0",
+		},
+		"redirect_uri": "xlaccsdk01://xunlei.com/callback?state=harbor",
+	}
+	body, status, err := c.jsonRequest(ctx, http.MethodPost, xunleiCaptchaInitURL, payload, map[string]string{
+		"accept":           "application/json;charset=UTF-8",
+		"content-type":     "application/json",
+		"x-client-id":      xunleiInitClientID,
+		"x-device-id":      xunleiInitDeviceID,
+		"x-client-version": xunleiInitClientVersion,
+	})
+	if err != nil {
+		return "", 0, err
+	}
+	if status != http.StatusOK {
+		return "", 0, fmt.Errorf("captcha init failed: status %d", status)
+	}
+	var resp struct {
+		CaptchaToken string `json:"captcha_token"`
+		URL          string `json:"url"`
+		ExpiresIn    int    `json:"expires_in"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return "", 0, err
+	}
+	if resp.URL != "" {
+		// Xunlei demands an interactive (slider) captcha that cannot be solved server-side.
+		return "", 0, errXunleiCaptchaRequired
+	}
+	if resp.CaptchaToken == "" {
+		return "", 0, fmt.Errorf("empty captcha token")
+	}
+	ttl := 300 * time.Second
+	if resp.ExpiresIn > 0 {
+		ttl = time.Duration(resp.ExpiresIn) * time.Second
+	}
+	return resp.CaptchaToken, ttl, nil
+}
+
+// xunleiCaptchaSign reproduces the xunlei shield signature: the client identity
+// plus timestamp is hashed through a fixed chain of salt strings.
+func xunleiCaptchaSign(timestamp string) string {
+	str := xunleiInitClientID + xunleiInitClientVersion + xunleiInitPackageName + xunleiInitDeviceID + timestamp
+	for _, algorithm := range xunleiCaptchaAlgorithms {
+		sum := md5.Sum([]byte(str + algorithm))
+		str = hex.EncodeToString(sum[:])
+	}
+	return "1." + str
+}
+
+const (
+	// Web client identity sent on the share lookup (matches the browser app).
+	xunleiWebClientID = "ZUBzD9J_XPXfn7f7"
+	xunleiWebDeviceID = "5505bd0cab8c9469b98e5891d9fb3e0d"
+
+	// Android-app identity used to mint the captcha token; captcha_sign is
+	// computed against these values.
+	xunleiInitClientID      = "ZUBzD9J_XPXfn7f7"
+	xunleiInitDeviceID      = "5505bd0cab8c9469b98e5891d9fb3e0d"
+	xunleiInitClientVersion = "1.10.0.2633"
+	xunleiInitPackageName   = "com.xunlei.browser"
+)
+
+// xunleiCaptchaAlgorithms is the fixed salt chain used by the official client.
+var xunleiCaptchaAlgorithms = []string{
+	"uWRwO7gPfdPB/0NfPtfQO+71",
+	"F93x+qPluYy6jdgNpq+lwdH1ap6WOM+nfz8/V",
+	"0HbpxvpXFsBK5CoTKam",
+	"dQhzbhzFRcawnsZqRETT9AuPAJ+wTQso82mRv",
+	"SAH98AmLZLRa6DB2u68sGhyiDh15guJpXhBzI",
+	"unqfo7Z64Rie9RNHMOB",
+	"7yxUdFADp3DOBvXdz0DPuKNVT35wqa5z0DEyEvf",
+	"RBG",
+	"ThTWPG5eC0UBqlbQ+04nZAptqGCdpv9o55A",
+}
+
+// xunleiShareHost and xunleiCaptchaInitURL are the live endpoints; tests override
+// them to point at a local httptest server.
+var (
+	xunleiShareHost      = "https://api-pan.xunlei.com"
+	xunleiCaptchaInitURL = "https://xluser-ssl.xunlei.com/v1/shield/captcha/init"
+)
 
 func (c *HTTPChecker) check115(ctx context.Context, item Item) Result {
 	shareCode := lastPathPart(item.URL)
