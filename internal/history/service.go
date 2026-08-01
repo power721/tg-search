@@ -50,6 +50,7 @@ type Options struct {
 	Settings             *repository.SettingsRepository
 	RuntimeConfig        config.Config
 	AIMediaMetadataTasks taskEnqueuer
+	GapRecoveryCooldown  *taskpkg.GapRecoveryCooldown
 }
 
 type taskEnqueuer interface {
@@ -78,6 +79,7 @@ type Service struct {
 	settings             *repository.SettingsRepository
 	runtimeConfig        config.Config
 	aiMediaMetadataTasks taskEnqueuer
+	gapRecoveryCooldown  *taskpkg.GapRecoveryCooldown
 	mu                   sync.Mutex
 	runningChannels      map[int64]struct{}
 	backlogCancel        context.CancelFunc
@@ -166,6 +168,7 @@ func NewService(opts Options) *Service {
 		settings:             opts.Settings,
 		runtimeConfig:        opts.RuntimeConfig,
 		aiMediaMetadataTasks: opts.AIMediaMetadataTasks,
+		gapRecoveryCooldown:  opts.GapRecoveryCooldown,
 		runningChannels:      map[int64]struct{}{},
 	}
 }
@@ -192,6 +195,13 @@ func (s *Service) RunGapRecoveryTask(ctx context.Context, item model.Task, progr
 		return fmt.Errorf("decode gap recovery payload: %w", err)
 	}
 	_, err := s.RecoverGapWithProgress(ctx, payload, progress)
+	if s.gapRecoveryCooldown != nil && payload.ChannelID > 0 {
+		if err != nil {
+			s.gapRecoveryCooldown.RecordFailure(payload.ChannelID, time.Now().UTC())
+		} else {
+			s.gapRecoveryCooldown.RecordSuccess(payload.ChannelID)
+		}
+	}
 	return err
 }
 
