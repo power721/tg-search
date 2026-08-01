@@ -80,6 +80,17 @@ func run(configPath string) error {
 	defer conn.Close()
 	logs.App.Info("database opened", zap.String("path", config.DatabasePath(cfg)))
 
+	// Read pool: separate multi-connection pool so public search reads run
+	// concurrently with sync/index writes instead of queueing behind the
+	// single writer connection. query_only connections can never write.
+	readConn, err := db.OpenRead(config.DatabasePath(cfg))
+	if err != nil {
+		logs.App.Error("open read pool failed", zap.String("path", config.DatabasePath(cfg)), zap.Error(err))
+		return err
+	}
+	defer readConn.Close()
+	logs.App.Info("database read pool opened", zap.String("path", config.DatabasePath(cfg)), zap.Int("read_pool_size", db.ReadPoolSize()))
+
 	ctx := context.Background()
 	if err := db.Migrate(ctx, conn); err != nil {
 		logs.App.Error("database migration failed", zap.Error(err))
@@ -91,9 +102,9 @@ func run(configPath string) error {
 	channels := repository.NewChannelRepository(conn)
 	messages := repository.NewMessageRepository(conn)
 	links := repository.NewLinkRepository(conn)
-	files := repository.NewFileRepository(conn)
+	files := repository.NewFileRepository(conn).WithReadDB(readConn)
 	resourceStats := repository.NewResourceStatsRepository(conn)
-	resourceIndex := repository.NewResourceIndexRepository(conn)
+	resourceIndex := repository.NewResourceIndexRepository(conn).WithReadDB(readConn)
 	cursors := repository.NewSyncCursorRepository(conn)
 	watchRules := repository.NewWatchRuleRepository(conn)
 	remoteSearch := repository.NewRemoteSearchTaskRepository(conn)
