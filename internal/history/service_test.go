@@ -1266,6 +1266,74 @@ func TestGapRecoveryTaskWorkerProcessesQueuedGap(t *testing.T) {
 	}
 }
 
+// blockingHistoryClient blocks every FetchHistory call until ctx is canceled,
+// simulating a stuck gotd RPC retry loop that would otherwise hang the worker.
+type stuckHistoryClient struct {
+	telegram.NopClient
+	called chan struct{}
+}
+
+func (f *stuckHistoryClient) FetchHistory(ctx context.Context, account telegram.AccountSession, channel telegram.ChannelRef, offsetID int64, limit int) ([]telegram.Message, error) {
+	select {
+	case f.called <- struct{}{}:
+	default:
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// TestRunGapRecoveryTaskBoundsStuckRun verifies that a hung gap-recovery run is
+// aborted by its per-run deadline rather than monopolizing the worker. The run
+// inherits the caller's (shorter) context deadline, so the blocking fetch
+// returns promptly with a context error.
+func TestRunGapRecoveryTaskBoundsStuckRun(t *testing.T) {
+	ctx := context.Background()
+	conn, accounts, channels, messages, links := setupHistoryTestStore(t)
+	accountID, channelID := seedHistoryAccountAndChannel(t, ctx, accounts, channels)
+	cursors := repository.NewSyncCursorRepository(conn)
+	if err := cursors.Save(ctx, model.SyncCursor{
+		AccountID: accountID, ChannelID: channelID, CursorType: "history", LastMessageID: 10, Date: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("save cursor: %v", err)
+	}
+	stuck := &stuckHistoryClient{called: make(chan struct{}, 1)}
+	historyService := NewService(Options{
+		DB: conn, Accounts: accounts, Channels: channels, Messages: messages, Links: links, Cursors: cursors,
+		Telegram:  stuck,
+		Sessions:  session.NewManager(filepath.Join(t.TempDir(), "sessions")),
+		Extractor: link.NewExtractor(),
+	})
+	payload, err := json.Marshal(taskpkg.GapRecoveryPayload{
+		AccountID:         accountID,
+		ChannelID:         channelID,
+		FromMessageID:     11,
+		ToMessageID:       14,
+		TriggerMessageID:  15,
+		TelegramChannelID: 200,
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	// Short caller deadline; the 5m run timeout inherits this earlier deadline.
+	runCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	err = historyService.RunGapRecoveryTask(runCtx, model.Task{Type: model.TaskTypeGapRecovery, PayloadJSON: string(payload)}, nil)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected stuck run to return a deadline error, got nil")
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("run was not bounded by the deadline, took %v", elapsed)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context.DeadlineExceeded, got %v", err)
+	}
+}
+
 type progressUpdate struct {
 	progress int64
 	total    int64
