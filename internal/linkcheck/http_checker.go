@@ -300,7 +300,14 @@ func (c *HTTPChecker) check123(ctx context.Context, item Item) Result {
 	if shareKey == "" {
 		return resultFor(item, StateUncertain, "无法解析分享地址")
 	}
-	body, status, err := c.request(ctx, http.MethodGet, "https://www.123pan.com/api/share/info?shareKey="+url.QueryEscape(shareKey), nil, nil)
+	// 123pan now serves the share/info API on the link's own host (the per-user
+	// <id>.share.123pan.cn subdomain or www.123912.com); www.123pan.com is a dead
+	// SPA catch-all that 404s every /api path. Derive the API base from the URL.
+	apiBase := "https://www.123912.com"
+	if parsed, err := url.Parse(item.URL); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		apiBase = parsed.Scheme + "://" + parsed.Host
+	}
+	body, status, err := c.request(ctx, http.MethodGet, apiBase+"/api/share/info?shareKey="+url.QueryEscape(shareKey), nil, nil)
 	if err != nil {
 		return requestFailure(ctx, item)
 	}
