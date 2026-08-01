@@ -23,11 +23,26 @@ func (h handlers) externalCheckLinks(c *gin.Context) {
 		return
 	}
 
+	// Prefer live, DB-backed runtime settings (editable on the settings page);
+	// fall back to the config.yaml defaults when settings storage is unavailable.
+	linkCfg := h.deps.RuntimeConfig.LinkCheck
+	if h.deps.Settings != nil {
+		if live, err := h.deps.Settings.LoadRuntimeSettings(c.Request.Context(), h.deps.RuntimeConfig); err == nil {
+			linkCfg = live.LinkCheck
+		}
+	}
+
+	// Timeout is request-driven: timeout_ms / timeout in the body, else the
+	// linkcheck package default (5s) when both are omitted.
 	timeout := req.TimeoutMS
 	if timeout == 0 {
 		timeout = req.Timeout * 1000
 	}
-	service := linkcheck.NewService(linkcheck.Options{})
+
+	service := linkcheck.NewService(linkcheck.Options{
+		Concurrency: linkCfg.Concurrency,
+		CacheTTL:    linkCfg.CacheTTL.Std(),
+	})
 	response, err := service.Check(c.Request.Context(), linkcheck.Request{
 		Items:   req.Items,
 		Timeout: time.Duration(timeout) * time.Millisecond,

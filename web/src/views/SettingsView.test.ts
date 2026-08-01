@@ -768,6 +768,8 @@ describe('SettingsView', () => {
     await wrapper.get('[data-testid="runtime-stream-buffers-input"]').setValue('8')
     await wrapper.get('[data-testid="runtime-stream-timeout-input"]').setValue('30s')
     await wrapper.get('[data-testid="runtime-media-concurrency-input"]').setValue('3')
+    await wrapper.get('[data-testid="runtime-linkcheck-concurrency-input"]').setValue('64')
+    await wrapper.get('[data-testid="runtime-linkcheck-cache-ttl-input"]').setValue('10m')
     await wrapper.get('[data-testid="save-runtime-settings"]').trigger('click')
     await flushPromises()
 
@@ -819,6 +821,10 @@ describe('SettingsView', () => {
             }
           ]
         }
+      },
+      link_check: {
+        concurrency: 64,
+        cache_ttl: '10m'
       }
     })
     expect(messageMocks.success).toHaveBeenCalledWith('媒体下载并发已立即生效，其余运行参数重启后生效')

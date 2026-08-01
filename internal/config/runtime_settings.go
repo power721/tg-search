@@ -1,10 +1,11 @@
 package config
 
 type RuntimeSettings struct {
-	Sync     RuntimeSyncSettings     `json:"sync"`
-	Storage  RuntimeStorageSettings  `json:"storage"`
-	Telegram RuntimeTelegramSettings `json:"telegram"`
-	AI       AIConfig                `json:"ai"`
+	Sync      RuntimeSyncSettings     `json:"sync"`
+	Storage   RuntimeStorageSettings  `json:"storage"`
+	Telegram  RuntimeTelegramSettings `json:"telegram"`
+	AI        AIConfig                `json:"ai"`
+	LinkCheck LinkCheckConfig         `json:"link_check"`
 }
 
 type RuntimeSyncSettings struct {
@@ -46,7 +47,8 @@ func RuntimeSettingsFromConfig(cfg Config) RuntimeSettings {
 			Stream:           cfg.Telegram.Stream,
 			Media:            cfg.Telegram.Media,
 		},
-		AI: cfg.AI,
+		AI:        cfg.AI,
+		LinkCheck: cfg.LinkCheck,
 	}
 }
 
@@ -64,6 +66,7 @@ func ApplyRuntimeSettings(cfg Config, settings RuntimeSettings) (Config, error) 
 	cfg.Telegram.Stream = settings.Telegram.Stream
 	cfg.Telegram.Media = settings.Telegram.Media
 	cfg.AI = settings.AI
+	cfg.LinkCheck = settings.LinkCheck
 	if err := validate(cfg); err != nil {
 		return Config{}, err
 	}
@@ -71,10 +74,11 @@ func ApplyRuntimeSettings(cfg Config, settings RuntimeSettings) (Config, error) 
 }
 
 type RuntimeSettingsResponse struct {
-	Sync     RuntimeSyncSettings       `json:"sync"`
-	Storage  RuntimeStorageSettings    `json:"storage"`
-	Telegram RuntimeTelegramSettings   `json:"telegram"`
-	AI       RuntimeAISettingsResponse `json:"ai"`
+	Sync      RuntimeSyncSettings       `json:"sync"`
+	Storage   RuntimeStorageSettings    `json:"storage"`
+	Telegram  RuntimeTelegramSettings   `json:"telegram"`
+	AI        RuntimeAISettingsResponse `json:"ai"`
+	LinkCheck LinkCheckConfig           `json:"link_check"`
 }
 
 type RuntimeAISettingsResponse struct {
@@ -122,9 +126,10 @@ func PreserveRuntimeSecrets(incoming RuntimeSettings, existing RuntimeSettings) 
 
 func RedactRuntimeSettings(settings RuntimeSettings) RuntimeSettingsResponse {
 	return RuntimeSettingsResponse{
-		Sync:     settings.Sync,
-		Storage:  settings.Storage,
-		Telegram: settings.Telegram,
+		Sync:      settings.Sync,
+		Storage:   settings.Storage,
+		Telegram:  settings.Telegram,
+		LinkCheck: settings.LinkCheck,
 		AI: RuntimeAISettingsResponse{
 			MediaMetadata: AIMediaMetadataSettingsResponse{
 				Enabled:         settings.AI.MediaMetadata.Enabled,

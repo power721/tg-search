@@ -144,6 +144,10 @@ export interface RuntimeSettings {
       providers?: AIMediaMetadataProviderSettings[]
     }
   }
+  link_check: {
+    concurrency: number
+    cache_ttl: string
+  }
 }
 
 export interface AIMediaMetadataProviderSettings {

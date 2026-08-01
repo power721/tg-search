@@ -15,9 +15,8 @@ const (
 	StateUnsupported = "unsupported"
 	StateUncertain   = "uncertain"
 
-	DefaultTimeout       = 5 * time.Second
-	BatchSize            = 10
-	MaxConcurrentBatches = 5
+	DefaultTimeout     = 5 * time.Second
+	DefaultConcurrency = 128 // flat worker-pool size; HTTP/2 multiplexing keeps connection count low
 )
 
 var (
@@ -54,11 +53,15 @@ type Checker interface {
 }
 
 type Options struct {
-	Checker Checker
+	Checker     Checker
+	Concurrency int
+	CacheTTL    time.Duration
 }
 
 type Service struct {
-	checker Checker
+	checker     Checker
+	concurrency int
+	cacheTTL    time.Duration
 }
 
 func NewService(options Options) *Service {
@@ -66,7 +69,15 @@ func NewService(options Options) *Service {
 	if checker == nil {
 		checker = NewHTTPChecker(nil)
 	}
-	return &Service{checker: checker}
+	concurrency := options.Concurrency
+	if concurrency < 1 {
+		concurrency = DefaultConcurrency
+	}
+	cacheTTL := options.CacheTTL
+	if cacheTTL < 0 {
+		cacheTTL = 0 // negative clamped to 0; a CacheTTL of 0 disables memoization
+	}
+	return &Service{checker: checker, concurrency: concurrency, cacheTTL: cacheTTL}
 }
 
 func (s *Service) Check(ctx context.Context, req Request) (Response, error) {
@@ -82,63 +93,48 @@ func (s *Service) Check(ctx context.Context, req Request) (Response, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	// Dedup by (disk_type|url|password): identical links are checked once and
+	// the result is broadcast to every original position.
+	keyOrder := make([]string, 0, len(items))
+	keyItem := make(map[string]Item, len(items))
+	keyIndices := make(map[string][]int, len(items))
+	for index, item := range items {
+		key := cacheKey(item)
+		if _, ok := keyItem[key]; !ok {
+			keyOrder = append(keyOrder, key)
+			keyItem[key] = item
+		}
+		keyIndices[key] = append(keyIndices[key], index)
+	}
+
 	results := make([]Result, len(items))
 	completed := make([]bool, len(items))
-	resultCh := make(chan indexedResult, len(items))
 
-	batches := buildBatches(items)
-	batchSlots := make(chan struct{}, MaxConcurrentBatches)
+	// Flat bounded worker pool. Each unique key runs in its own goroutine;
+	// different keys write disjoint index sets, so no locking is needed.
+	sem := make(chan struct{}, s.concurrency)
 	var wg sync.WaitGroup
-	for _, batch := range batches {
+	for _, key := range keyOrder {
+		item := keyItem[key]
+		indices := keyIndices[key]
 		wg.Add(1)
-		go func(batch []indexedItem) {
+		go func(item Item, indices []int) {
 			defer wg.Done()
 			select {
-			case batchSlots <- struct{}{}:
+			case sem <- struct{}{}:
 			case <-ctx.Done():
 				return
 			}
-			defer func() { <-batchSlots }()
+			defer func() { <-sem }()
 
-			for _, entry := range batch {
-				if ctx.Err() != nil {
-					return
-				}
-				result := s.checker.Check(ctx, entry.item)
-				result.DiskType = entry.item.DiskType
-				result.URL = entry.item.URL
-				result.Password = entry.item.Password
-				select {
-				case resultCh <- indexedResult{index: entry.index, result: result}:
-				case <-ctx.Done():
-					return
-				}
+			result := s.checkKey(ctx, item)
+			for _, index := range indices {
+				results[index] = result
+				completed[index] = true
 			}
-		}(batch)
+		}(item, indices)
 	}
-
-	go func() {
-		wg.Wait()
-		close(resultCh)
-	}()
-
-	remaining := len(items)
-	for remaining > 0 {
-		select {
-		case item, ok := <-resultCh:
-			if !ok {
-				remaining = 0
-				continue
-			}
-			if !completed[item.index] {
-				results[item.index] = item.result
-				completed[item.index] = true
-				remaining--
-			}
-		case <-ctx.Done():
-			remaining = 0
-		}
-	}
+	wg.Wait()
 
 	for index, item := range items {
 		if !completed[index] {
@@ -162,14 +158,27 @@ func (s *Service) Check(ctx context.Context, req Request) (Response, error) {
 	}, nil
 }
 
-type indexedResult struct {
-	index  int
-	result Result
+// checkKey resolves a single (deduplicated) link, consulting the process-level
+// cache first so repeated checks return instantly without hitting the network.
+func (s *Service) checkKey(ctx context.Context, item Item) Result {
+	key := cacheKey(item)
+	if cached, ok := globalCache.get(key); ok {
+		return cached
+	}
+
+	result := s.checker.Check(ctx, item)
+	result.DiskType = item.DiskType
+	result.URL = item.URL
+	result.Password = item.Password
+	if strings.TrimSpace(result.State) == "" {
+		result.State = StateUncertain
+	}
+	globalCache.set(key, result, s.cacheTTL)
+	return result
 }
 
-type indexedItem struct {
-	index int
-	item  Item
+func cacheKey(item Item) string {
+	return strings.Join([]string{item.DiskType, item.URL, item.Password}, "|")
 }
 
 func normalizeItems(items []Item) []Item {
@@ -186,34 +195,99 @@ func normalizeItems(items []Item) []Item {
 	return out
 }
 
-func buildBatches(items []Item) [][]indexedItem {
-	typeOrder := make([]string, 0)
-	groups := map[string][]indexedItem{}
-	for index, item := range items {
-		if _, ok := groups[item.DiskType]; !ok {
-			typeOrder = append(typeOrder, item.DiskType)
-		}
-		groups[item.DiskType] = append(groups[item.DiskType], indexedItem{index: index, item: item})
-	}
-
-	var batches [][]indexedItem
-	for _, diskType := range typeOrder {
-		group := groups[diskType]
-		for start := 0; start < len(group); start += BatchSize {
-			end := start + BatchSize
-			if end > len(group) {
-				end = len(group)
-			}
-			batches = append(batches, group[start:end])
-		}
-	}
-	return batches
-}
-
 func groupResults(results []Result) map[string][]Result {
 	grouped := make(map[string][]Result)
 	for _, result := range results {
 		grouped[result.DiskType] = append(grouped[result.DiskType], result)
 	}
 	return grouped
+}
+
+// cacheable reports whether a result state is definitive enough to memoize.
+// Uncertain/unsupported results depend on transient conditions and are never cached.
+func cacheable(state string) bool {
+	switch state {
+	case StateOK, StateBad, StateLocked:
+		return true
+	default:
+		return false
+	}
+}
+
+type cacheEntry struct {
+	result    Result
+	expiresAt time.Time
+}
+
+// resultCache is a process-wide TTL cache of definitive link-check results.
+// A background sweeper reclaims expired entries so the map cannot grow unbounded.
+type resultCache struct {
+	mu      sync.Mutex
+	entries map[string]cacheEntry
+}
+
+var globalCache = newResultCache()
+
+func newResultCache() *resultCache {
+	return &resultCache{entries: make(map[string]cacheEntry)}
+}
+
+func (c *resultCache) get(key string) (Result, bool) {
+	now := time.Now()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry, ok := c.entries[key]
+	if !ok {
+		return Result{}, false
+	}
+	if now.After(entry.expiresAt) {
+		delete(c.entries, key)
+		return Result{}, false
+	}
+	return entry.result, true
+}
+
+func (c *resultCache) set(key string, result Result, ttl time.Duration) {
+	if ttl <= 0 || !cacheable(result.State) {
+		return
+	}
+	now := time.Now()
+	c.mu.Lock()
+	c.entries[key] = cacheEntry{result: result, expiresAt: now.Add(ttl)}
+	if len(c.entries) > 4096 {
+		c.sweepLocked(now)
+	}
+	c.mu.Unlock()
+	startCacheSweeperOnce()
+}
+
+func (c *resultCache) sweepLocked(now time.Time) {
+	for key, entry := range c.entries {
+		if now.After(entry.expiresAt) {
+			delete(c.entries, key)
+		}
+	}
+}
+
+var cacheSweeperOnce sync.Once
+
+func startCacheSweeperOnce() {
+	cacheSweeperOnce.Do(func() {
+		go func() {
+			ticker := time.NewTicker(time.Minute)
+			defer ticker.Stop()
+			for now := range ticker.C {
+				globalCache.mu.Lock()
+				globalCache.sweepLocked(now)
+				globalCache.mu.Unlock()
+			}
+		}()
+	})
+}
+
+// resetCacheForTest clears the process-wide cache; intended only for tests.
+func resetCacheForTest() {
+	globalCache.mu.Lock()
+	globalCache.entries = make(map[string]cacheEntry)
+	globalCache.mu.Unlock()
 }

@@ -420,9 +420,11 @@ async function copyCode(key: string, value: string) {
       </div>
 
       <p class="doc-text">
-        检测会按 <code>disk_type</code> 分组，同类型链接每 10 个拆成一个检测批次，最多同时执行 5 个批次。
-        例如 100 个夸克链接会拆成 10 个批次并以 5 批并发处理。达到超时时间后，未完成的链接会以
-        <code>uncertain</code> 返回。
+        检测采用高并发工作池（默认并发 128）并复用 HTTP/2 连接多路复用，300+ 链接通常可在 1 秒内完成。
+        并发数与结果缓存时长可在「设置 → 运行参数 → 链接检测」中调整，保存后立即生效。
+        相同链接会在单次请求内去重；确定（<code>ok</code>/<code>bad</code>/<code>locked</code>）结果在进程内缓存
+        （默认约 5 分钟，设为 <code>0</code> 关闭），<code>uncertain</code>/<code>unsupported</code> 不缓存。
+        超时时间由请求体的 <code>timeout_ms</code>/<code>timeout</code> 指定（默认 5 秒），到期未完成的链接以 <code>uncertain</code> 返回。
       </p>
 
       <div class="code-grid">
