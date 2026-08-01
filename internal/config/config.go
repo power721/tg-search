@@ -27,6 +27,13 @@ type Config struct {
 	AI            AIConfig            `yaml:"ai" json:"ai"`
 	Bot           BotConfig           `yaml:"bot" json:"bot"`
 	TaskRetention TaskRetentionConfig `yaml:"task_retention" json:"task_retention"`
+	LinkCheck     LinkCheckConfig     `yaml:"link_check" json:"link_check"`
+}
+
+// LinkCheckConfig tunes the /api/check/links pan-link checker.
+type LinkCheckConfig struct {
+	Concurrency int      `yaml:"concurrency" json:"concurrency"` // flat worker-pool size
+	CacheTTL    Duration `yaml:"cache_ttl" json:"cache_ttl"`     // TTL for memoized definitive results (0 disables)
 }
 
 type ServerConfig struct {
@@ -274,6 +281,10 @@ func defaultConfig() Config {
 			FloodWaitDays:    30,
 			ReconnectingDays: 7,
 		},
+		LinkCheck: LinkCheckConfig{
+			Concurrency: 128,
+			CacheTTL:    Duration(5 * time.Minute),
+		},
 	}
 }
 
@@ -370,6 +381,12 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.TaskRetention == (TaskRetentionConfig{}) {
 		cfg.TaskRetention = defaults.TaskRetention
+	}
+	if cfg.LinkCheck.Concurrency < 1 {
+		cfg.LinkCheck.Concurrency = defaults.LinkCheck.Concurrency
+	}
+	if cfg.LinkCheck.CacheTTL < 0 {
+		cfg.LinkCheck.CacheTTL = defaults.LinkCheck.CacheTTL
 	}
 }
 

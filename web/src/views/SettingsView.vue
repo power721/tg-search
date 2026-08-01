@@ -189,6 +189,8 @@ const runtimeForm = ref({
   streamBuffers: '',
   streamChunkTimeout: '',
   mediaConcurrency: '',
+  linkCheckConcurrency: '128',
+  linkCheckCacheTTL: '5m',
   aiMediaEnabled: false,
   aiProvider: 'openai_compatible',
   aiBaseURL: '',
@@ -981,6 +983,8 @@ function fillRuntimeForm(settings: RuntimeSettings) {
     streamBuffers: String(settings.telegram.stream.buffers),
     streamChunkTimeout: settings.telegram.stream.chunk_timeout,
     mediaConcurrency: String(settings.telegram.media.concurrency),
+    linkCheckConcurrency: String(settings.link_check?.concurrency ?? 128),
+    linkCheckCacheTTL: settings.link_check?.cache_ttl ?? '5m',
     aiMediaEnabled: Boolean(aiMedia?.enabled),
     aiProvider: aiMedia?.provider || 'openai_compatible',
     aiBaseURL: aiMedia?.base_url ?? '',
@@ -1065,6 +1069,10 @@ function runtimePayload(): RuntimeSettings {
           enabled: provider.enabled
         }))
       }
+    },
+    link_check: {
+      concurrency: positiveInteger(runtimeForm.value.linkCheckConcurrency),
+      cache_ttl: runtimeForm.value.linkCheckCacheTTL.trim() || '0'
     }
   }
 }
@@ -1374,6 +1382,27 @@ function versionStatusText() {
                 </n-form-item>
                 <n-form-item label="媒体下载并发">
                   <n-input v-model:value="runtimeForm.mediaConcurrency" data-testid="runtime-media-concurrency-input" inputmode="numeric" />
+                </n-form-item>
+              </div>
+            </div>
+
+            <div class="runtime-section">
+              <h3>链接检测</h3>
+              <p class="restart-note">网盘链接检测（/api/check/links）的并发与缓存。保存后立即生效。</p>
+              <div class="runtime-grid">
+                <n-form-item label="检测并发数">
+                  <n-input
+                    v-model:value="runtimeForm.linkCheckConcurrency"
+                    data-testid="runtime-linkcheck-concurrency-input"
+                    inputmode="numeric"
+                  />
+                </n-form-item>
+                <n-form-item label="结果缓存时长">
+                  <n-input
+                    v-model:value="runtimeForm.linkCheckCacheTTL"
+                    data-testid="runtime-linkcheck-cache-ttl-input"
+                    placeholder="如 5m；填 0 关闭缓存"
+                  />
                 </n-form-item>
               </div>
             </div>

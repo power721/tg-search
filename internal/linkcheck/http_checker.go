@@ -7,10 +7,12 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -18,9 +20,41 @@ type HTTPChecker struct {
 	client *http.Client
 }
 
+// defaultHTTPClient is a process-wide tuned client shared by all HTTPCheckers.
+// High MaxIdleConnsPerHost plus HTTP/2 multiplexing lets hundreds of concurrent
+// requests to the same pan API share very few TCP/TLS connections, which is the
+// key to checking 300+ links within ~1s.
+var (
+	defaultHTTPClientOnce sync.Once
+	defaultHTTPClient     *http.Client
+)
+
+func defaultClient() *http.Client {
+	defaultHTTPClientOnce.Do(func() {
+		dialer := &net.Dialer{
+			Timeout:   3 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}
+		transport := &http.Transport{
+			MaxIdleConns:          1000,
+			MaxIdleConnsPerHost:   512,
+			MaxConnsPerHost:       0, // unlimited: rely on HTTP/2 multiplexing + request ctx
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   3 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+			ForceAttemptHTTP2:     true,
+			Proxy:                 http.ProxyFromEnvironment,
+			DialContext:           dialer.DialContext,
+		}
+		// No client-level Timeout: each request is bounded by its context.
+		defaultHTTPClient = &http.Client{Transport: transport}
+	})
+	return defaultHTTPClient
+}
+
 func NewHTTPChecker(client *http.Client) *HTTPChecker {
 	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
+		client = defaultClient()
 	}
 	return &HTTPChecker{client: client}
 }

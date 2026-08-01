@@ -28,6 +28,7 @@ func (f fakeChecker) Check(ctx context.Context, item Item) Result {
 }
 
 func TestServiceChecksItemsConcurrentlyAndMarksTimeoutsUncertain(t *testing.T) {
+	resetCacheForTest()
 	service := NewService(Options{
 		Checker: fakeChecker{
 			results: map[string]Result{
@@ -63,7 +64,8 @@ func TestServiceChecksItemsConcurrentlyAndMarksTimeoutsUncertain(t *testing.T) {
 	}
 }
 
-func TestServiceSplitsSameDiskTypeIntoTenItemBatches(t *testing.T) {
+func TestServiceChecksAllItemsOfSameDiskType(t *testing.T) {
+	resetCacheForTest()
 	service := NewService(Options{Checker: fakeChecker{}})
 	items := make([]Item, 0, 100)
 	for i := 0; i < 100; i++ {
@@ -79,9 +81,10 @@ func TestServiceSplitsSameDiskTypeIntoTenItemBatches(t *testing.T) {
 	}
 }
 
-func TestServiceRunsAtMostFiveChecksConcurrentlyAcrossBatches(t *testing.T) {
+func TestServiceBoundedByConfiguredConcurrency(t *testing.T) {
+	resetCacheForTest()
 	checker := &concurrencyChecker{delay: 10 * time.Millisecond}
-	service := NewService(Options{Checker: checker})
+	service := NewService(Options{Checker: checker, Concurrency: 8})
 	items := make([]Item, 0, 100)
 	for i := 0; i < 100; i++ {
 		items = append(items, Item{DiskType: "quark", URL: fmt.Sprintf("https://pan.quark.cn/s/item-%03d", i)})
@@ -97,12 +100,13 @@ func TestServiceRunsAtMostFiveChecksConcurrentlyAcrossBatches(t *testing.T) {
 	if len(response.Results) != 100 {
 		t.Fatalf("results length = %d, want 100", len(response.Results))
 	}
-	if checker.maxActive > 5 {
-		t.Fatalf("max active checks = %d, want <= 5", checker.maxActive)
+	if checker.maxActive > 8 {
+		t.Fatalf("max active checks = %d, want <= 8", checker.maxActive)
 	}
 }
 
 func TestServiceUsesFiveSecondDefaultTimeout(t *testing.T) {
+	resetCacheForTest()
 	service := NewService(Options{Checker: fakeChecker{}})
 
 	response, err := service.Check(context.Background(), Request{
@@ -113,6 +117,61 @@ func TestServiceUsesFiveSecondDefaultTimeout(t *testing.T) {
 	}
 	if response.TimeoutMS != 5000 {
 		t.Fatalf("timeout_ms = %d, want 5000", response.TimeoutMS)
+	}
+}
+
+func TestServiceDeduplicatesIdenticalLinks(t *testing.T) {
+	resetCacheForTest()
+	checker := &countingChecker{}
+	service := NewService(Options{Checker: checker})
+
+	items := []Item{
+		{DiskType: "quark", URL: "https://pan.quark.cn/s/dup"},
+		{DiskType: "baidu", URL: "https://pan.baidu.com/s/other"},
+		{DiskType: "quark", URL: "https://pan.quark.cn/s/dup"}, // duplicate
+		{DiskType: "quark", URL: "https://pan.quark.cn/s/dup"}, // duplicate
+	}
+
+	response, err := service.Check(context.Background(), Request{Items: items})
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
+	if got := checker.calls(); got != 2 {
+		t.Fatalf("checker calls = %d, want 2 (one per unique link)", got)
+	}
+	if len(response.Results) != 4 {
+		t.Fatalf("results length = %d, want 4", len(response.Results))
+	}
+	// Every position, including duplicates, must be filled with the same result.
+	for i, r := range response.Results {
+		if r.State != StateOK {
+			t.Fatalf("result[%d] state = %q, want ok", i, r.State)
+		}
+	}
+	if response.Results[0].URL != response.Results[2].URL {
+		t.Fatalf("duplicate positions should share the broadcast result")
+	}
+}
+
+func TestServiceCachesDefinitiveResultsAcrossChecks(t *testing.T) {
+	resetCacheForTest()
+	checker := &countingChecker{}
+	service := NewService(Options{Checker: checker, CacheTTL: time.Minute})
+	item := Item{DiskType: "quark", URL: "https://pan.quark.cn/s/cached"}
+
+	if _, err := service.Check(context.Background(), Request{Items: []Item{item}}); err != nil {
+		t.Fatalf("first Check returned error: %v", err)
+	}
+	if got := checker.calls(); got != 1 {
+		t.Fatalf("checker calls after first check = %d, want 1", got)
+	}
+
+	// Second check for the same link must be served from cache.
+	if _, err := service.Check(context.Background(), Request{Items: []Item{item}}); err != nil {
+		t.Fatalf("second Check returned error: %v", err)
+	}
+	if got := checker.calls(); got != 1 {
+		t.Fatalf("checker calls after cached check = %d, want 1 (served from cache)", got)
 	}
 }
 
@@ -140,4 +199,55 @@ func (c *concurrencyChecker) Check(ctx context.Context, item Item) Result {
 	c.active--
 	c.mu.Unlock()
 	return Result{DiskType: item.DiskType, URL: item.URL, State: StateOK, Summary: "链接有效"}
+}
+
+type countingChecker struct {
+	mu    sync.Mutex
+	count int
+}
+
+func (c *countingChecker) Check(ctx context.Context, item Item) Result {
+	c.mu.Lock()
+	c.count++
+	c.mu.Unlock()
+	return Result{DiskType: item.DiskType, URL: item.URL, State: StateOK, Summary: "链接有效"}
+}
+
+func (c *countingChecker) calls() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.count
+}
+
+// latencyChecker simulates a fixed per-link network round-trip without real I/O.
+type latencyChecker struct {
+	delay time.Duration
+}
+
+func (l *latencyChecker) Check(ctx context.Context, item Item) Result {
+	select {
+	case <-time.After(l.delay):
+	case <-ctx.Done():
+		return Result{DiskType: item.DiskType, URL: item.URL, State: StateUncertain, Summary: "检测超时"}
+	}
+	return Result{DiskType: item.DiskType, URL: item.URL, State: StateOK, Summary: "链接有效"}
+}
+
+// BenchmarkServiceCheck300Links shows the flat worker pool completes 300 links in
+// roughly ceil(300/concurrency) waves — well under the 1s target at a realistic
+// ~60ms per-link latency. Run: go test ./internal/linkcheck/ -bench=300Links -benchtime=5x
+func BenchmarkServiceCheck300Links(b *testing.B) {
+	items := make([]Item, 300)
+	for i := range items {
+		items[i] = Item{DiskType: "quark", URL: fmt.Sprintf("https://pan.quark.cn/s/bench-%03d", i)}
+	}
+	service := NewService(Options{Checker: &latencyChecker{delay: 60 * time.Millisecond}, Concurrency: 128})
+	ctx := context.Background()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		resetCacheForTest()
+		if _, err := service.Check(ctx, Request{Items: items, Timeout: 5 * time.Second}); err != nil {
+			b.Fatalf("Check: %v", err)
+		}
+	}
 }
