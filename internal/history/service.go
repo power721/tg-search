@@ -105,6 +105,11 @@ var ErrAccountNotReady = errors.New("telegram account is not ready")
 
 const accountFloodWaitDeferral = time.Hour
 
+// gapRecoveryTaskTimeout caps a single gap-recovery run. Generous enough for a
+// healthy multi-thousand-message gap yet short enough that a run hung in the
+// gotd RPC retry loop is aborted before it monopolizes the worker.
+const gapRecoveryTaskTimeout = 5 * time.Minute
+
 type floodWaitDeferredError struct {
 	err error
 }
@@ -194,7 +199,15 @@ func (s *Service) RunGapRecoveryTask(ctx context.Context, item model.Task, progr
 	if err := json.Unmarshal([]byte(item.PayloadJSON), &payload); err != nil {
 		return fmt.Errorf("decode gap recovery payload: %w", err)
 	}
-	_, err := s.RecoverGapWithProgress(ctx, payload, progress)
+	// Bound each run: when Telegram is flaky the gotd RPC retry loop
+	// (MaxRetries 20, RetryInterval 2s) can hang inside FetchHistory for many
+	// minutes with no progress, monopolizing the single task worker and burning
+	// CPU on retries. A deadline aborts the stuck RPC (gotd honors ctx), the run
+	// fails, and the per-channel cooldown suppresses immediate re-enqueue. Any
+	// batches already stored are committed, so progress is not lost.
+	taskCtx, cancel := context.WithTimeout(ctx, gapRecoveryTaskTimeout)
+	defer cancel()
+	_, err := s.RecoverGapWithProgress(taskCtx, payload, progress)
 	if s.gapRecoveryCooldown != nil && payload.ChannelID > 0 {
 		if err != nil {
 			s.gapRecoveryCooldown.RecordFailure(payload.ChannelID, time.Now().UTC())
