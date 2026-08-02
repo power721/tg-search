@@ -1006,7 +1006,8 @@ func (s *Service) refreshResourceStats(ctx context.Context) error {
 	if s.resources == nil {
 		return nil
 	}
-	return s.resources.RefreshGlobalGrouped(ctx)
+	s.resources.MarkStatsDirty()
+	return nil
 }
 
 func (s *Service) tryAcquireChannel(channelID int64) bool {

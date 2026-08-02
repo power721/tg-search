@@ -254,6 +254,8 @@ func run(configPath string) error {
 	logs.App.Info("unfinished tasks restored")
 	taskWorker.Start(ctx)
 	logs.App.Info("task worker started")
+	resourceService.Start(ctx)
+	logs.App.Info("resource stats refresher started")
 	accountManager := account.NewManager(account.ManagerOptions{
 		Accounts: accounts,
 		Updates:  updateService,
@@ -380,6 +382,10 @@ func run(configPath string) error {
 	}
 	if err := accountManager.Stop(shutdownCtx); err != nil {
 		logs.App.Error("account manager stop failed", zap.Error(err))
+		return err
+	}
+	if err := resourceService.Stop(shutdownCtx); err != nil {
+		logs.App.Error("resource stats refresher stop failed", zap.Error(err))
 		return err
 	}
 	logs.App.Info("tg-search stopped")

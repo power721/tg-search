@@ -357,7 +357,10 @@ func (p *Processor) refreshResourceStats(ctx context.Context) error {
 	if p.resources == nil {
 		return nil
 	}
-	return p.resources.RefreshGlobalGrouped(ctx)
+	// Stats recompute is O(full-table); mark dirty and let the coalesced
+	// background loop handle it instead of doing it on every message.
+	p.resources.MarkStatsDirty()
+	return nil
 }
 
 func (p *Processor) advanceHistoryCursor(ctx context.Context, channel model.Channel, event Event) error {

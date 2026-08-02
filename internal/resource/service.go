@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -155,12 +157,31 @@ type Service struct {
 	messages  *repository.MessageRepository
 	extractor *link.Extractor
 	logger    *zap.Logger
+
+	statsRefreshInterval time.Duration
+	statsDirty           atomic.Bool
+
+	statsMu     sync.Mutex
+	statsCancel context.CancelFunc
+	statsWG     sync.WaitGroup
 }
+
+// defaultStatsRefreshInterval bounds how often the resource-stats cache
+// (resource_group_counts) is recomputed by the background loop. The recompute
+// scans the full links/files tables, so coalescing bursts into at most one run
+// per interval keeps CPU bounded instead of doing a full-table COUNT per
+// incoming message.
+const defaultStatsRefreshInterval = 5 * time.Second
 
 var ErrInvalidResourceID = errors.New("invalid resource id")
 
 func NewService(links *repository.LinkRepository, files *repository.FileRepository, extras ...any) *Service {
-	service := &Service{links: links, files: files, logger: zap.NewNop()}
+	service := &Service{
+		links:                links,
+		files:                files,
+		logger:               zap.NewNop(),
+		statsRefreshInterval: defaultStatsRefreshInterval,
+	}
 	for _, extra := range extras {
 		switch value := extra.(type) {
 		case *repository.ResourceStatsRepository:
@@ -176,6 +197,77 @@ func NewService(links *repository.LinkRepository, files *repository.FileReposito
 		}
 	}
 	return service
+}
+
+// Start launches the background goroutine that coalesces resource-stats
+// refreshes. Callers that mutate links/files mark the stats dirty (cheap atomic
+// store); the loop recomputes at most once per interval instead of running
+// full-table COUNTs synchronously on every message.
+func (s *Service) Start(ctx context.Context) {
+	s.statsMu.Lock()
+	defer s.statsMu.Unlock()
+	if s.statsCancel != nil {
+		return
+	}
+	interval := s.statsRefreshInterval
+	if interval <= 0 {
+		interval = defaultStatsRefreshInterval
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	s.statsCancel = cancel
+	s.statsWG.Add(1)
+	go s.statsRefreshLoop(runCtx, interval)
+}
+
+// Stop signals the background stats refresher to exit and waits up to ctx.
+func (s *Service) Stop(ctx context.Context) error {
+	s.statsMu.Lock()
+	cancel := s.statsCancel
+	s.statsCancel = nil
+	s.statsMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	done := make(chan struct{})
+	go func() {
+		s.statsWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// MarkStatsDirty requests a stats recompute on the next background tick. It is
+// safe to call on every message; the recompute is coalesced to once per
+// interval. If the loop is not running, the next GlobalGrouped read still
+// self-heals via the lazy cache-miss path.
+func (s *Service) MarkStatsDirty() {
+	s.statsDirty.Store(true)
+}
+
+func (s *Service) statsRefreshLoop(ctx context.Context, interval time.Duration) {
+	defer s.statsWG.Done()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if !s.statsDirty.CompareAndSwap(true, false) {
+				continue
+			}
+			if err := s.RefreshGlobalGrouped(ctx); err != nil {
+				s.logger.Warn("background resource stats refresh failed", zap.Error(err))
+				// Re-arm so the next tick retries instead of dropping the update.
+				s.statsDirty.Store(true)
+			}
+		}
+	}
 }
 
 // repairProgressSink mirrors task.ProgressSink so this package need not import
@@ -754,7 +846,10 @@ func (s *Service) RefreshMessage(ctx context.Context, messageID int64) error {
 			return err
 		}
 	}
-	return s.RefreshGlobalGrouped(ctx)
+	// Stats recompute is O(full-table); defer to the coalesced background loop
+	// instead of running it on every message. The cache self-heals on read.
+	s.MarkStatsDirty()
+	return nil
 }
 
 func (s *Service) RefreshMessages(ctx context.Context, messageIDs []int64) error {
@@ -763,7 +858,8 @@ func (s *Service) RefreshMessages(ctx context.Context, messageIDs []int64) error
 			return err
 		}
 	}
-	return s.RefreshGlobalGrouped(ctx)
+	s.MarkStatsDirty()
+	return nil
 }
 
 func (s *Service) DeleteMessageResources(ctx context.Context, messageID int64) error {
@@ -772,7 +868,8 @@ func (s *Service) DeleteMessageResources(ctx context.Context, messageID int64) e
 			return err
 		}
 	}
-	return s.RefreshGlobalGrouped(ctx)
+	s.MarkStatsDirty()
+	return nil
 }
 
 func (s *Service) RebuildIndex(ctx context.Context) error {

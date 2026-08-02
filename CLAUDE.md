@@ -50,14 +50,9 @@ Pull requests should describe the change, list commands run, and link related is
 
 Do not commit local runtime data from `data/`, Telegram credentials, API keys, session files, logs, backups, or generated secrets. Use local `config.yaml` for development and `/data/tg-search/config.yaml` in production.
 
-## Git Worktree Policy
-1. Create a new Git worktree for every task.
-2. Create and use a dedicated feature branch inside that worktree.
-3. Do not make changes directly on the `main` branch.
-4. Commit all changes to the task branch.
-5. Merge the task branch into `main` through the normal review process.
-6. After the merge is complete:
-    * Remove the worktree (`git worktree remove <path>`).
-    * Delete the merged branch (`git branch -d <branch>`).
-    * Verify that no unused worktrees remain (`git worktree list`).
-7. Keep only active worktrees in the repository.
+## Release Policy Exception
+1. Release/version publishing must not create a new worktree.
+2. Releases should be performed directly from main or a dedicated release branch.
+3. Release commits must be made without using task worktrees.
+4. If a release branch is used, it should be lightweight and short-lived, and not tied to a worktree lifecycle.
+5. After release, no additional cleanup of worktrees is required for the release process itself.

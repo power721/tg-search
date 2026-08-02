@@ -550,12 +550,12 @@ func TestProcessorRefreshesResourceStatsAfterNewMessage(t *testing.T) {
 		t.Fatalf("process new event: %v", err)
 	}
 
-	grouped, found, err := stats.GetGrouped(ctx)
+	grouped, err := resources.GlobalGrouped(ctx)
 	if err != nil {
 		t.Fatalf("get grouped stats: %v", err)
 	}
-	if !found || grouped["_total"] != 2 {
-		t.Fatalf("grouped stats = %+v found=%v, want _total=2", grouped, found)
+	if grouped["_total"] != 2 {
+		t.Fatalf("grouped stats = %+v, want _total=2", grouped)
 	}
 	indexed, err := resources.List(ctx, resource.Query{Keyword: "资源", Limit: 10})
 	if err != nil {

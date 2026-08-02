@@ -278,12 +278,12 @@ func TestSyncChannelStoresBatchesLinksAndCursor(t *testing.T) {
 	if len(storedFiles) != 1 || storedFiles[0].FileName != "ubuntu.iso" {
 		t.Fatalf("stored files = %+v, want ubuntu.iso", storedFiles)
 	}
-	grouped, found, err := resourceStats.GetGrouped(ctx)
+	grouped, err := resources.GlobalGrouped(ctx)
 	if err != nil {
 		t.Fatalf("get resource stats: %v", err)
 	}
-	if !found || grouped["_total"] != 3 {
-		t.Fatalf("resource stats = %+v found=%v, want _total=3", grouped, found)
+	if grouped["_total"] != 3 {
+		t.Fatalf("resource stats = %+v, want _total=3", grouped)
 	}
 
 	linkResults, err := links.Search(ctx, repository.LinkSearchParams{Type: "aliyun", Limit: 10})

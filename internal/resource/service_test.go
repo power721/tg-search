@@ -150,6 +150,77 @@ func TestResourceLibraryDeleteManyRemovesLinksAndFiles(t *testing.T) {
 	}
 }
 
+func TestServiceBackgroundStatsRefreshCoalescesDirtyMarks(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(filepath.Join(t.TempDir(), "telegram.db"))
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	defer conn.Close()
+	if err := db.Migrate(ctx, conn); err != nil {
+		t.Fatalf("Migrate returned error: %v", err)
+	}
+
+	accounts := repository.NewAccountRepository(conn)
+	channels := repository.NewChannelRepository(conn)
+	messages := repository.NewMessageRepository(conn)
+	links := repository.NewLinkRepository(conn)
+	files := repository.NewFileRepository(conn)
+	stats := repository.NewResourceStatsRepository(conn)
+
+	accountID, _ := accounts.Save(ctx, model.Account{Phone: "+10000000000", Status: model.AccountStatusOnline})
+	channelID, _ := channels.Save(ctx, model.Channel{AccountID: accountID, TelegramChannelID: 1, Title: "VIP", Type: model.ChannelTypeChannel})
+	stored, err := messages.SaveBatch(ctx, []model.Message{
+		{AccountID: accountID, ChannelID: channelID, TelegramMessageID: 1, Text: "ubuntu", RawJSON: "{}", Date: time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)},
+	})
+	if err != nil {
+		t.Fatalf("save messages: %v", err)
+	}
+	if _, err := links.SaveBatch(ctx, stored[0].ID, []model.Link{{Type: "url", Category: "http", URL: "https://example.com/u"}}); err != nil {
+		t.Fatalf("save link: %v", err)
+	}
+
+	service := NewService(links, files, stats)
+	// The per-message path only marks dirty now; the cache must NOT be populated
+	// synchronously anymore (that was the per-message full-table scan we removed).
+	if err := service.RefreshMessage(ctx, stored[0].ID); err != nil {
+		t.Fatalf("RefreshMessage: %v", err)
+	}
+	if grouped, found, err := stats.GetGrouped(ctx); err != nil || found {
+		t.Fatalf("cache should stay empty until background refresh, got grouped=%+v found=%v err=%v", grouped, found, err)
+	}
+
+	// Short interval so the test ticks quickly; Start launches the coalescing loop.
+	service.statsRefreshInterval = 20 * time.Millisecond
+	service.Start(ctx)
+	defer service.Stop(context.Background())
+
+	// A burst of dirty marks must coalesce into a single refresh, not 50.
+	for i := 0; i < 50; i++ {
+		service.MarkStatsDirty()
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	var grouped map[string]int
+	for time.Now().Before(deadline) {
+		g, found, err := stats.GetGrouped(ctx)
+		if err != nil {
+			t.Fatalf("get grouped: %v", err)
+		}
+		if found {
+			grouped = g
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if grouped == nil {
+		t.Fatalf("background refresh never populated the cache")
+	}
+	if grouped["_total"] != 1 {
+		t.Fatalf("grouped = %+v, want _total=1 (one link)", grouped)
+	}
+}
+
 func TestResourceLibraryResourceTypeStatsCountsDashboardCategories(t *testing.T) {
 	ctx := context.Background()
 	conn, err := db.Open(filepath.Join(t.TempDir(), "telegram.db"))

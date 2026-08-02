@@ -106,9 +106,7 @@ func (s *Service) RunMediaMetadataTask(ctx context.Context, item model.Task, pro
 		return err
 	}
 	if s.resources != nil && updated > 0 {
-		if err := s.resources.RefreshGlobalGrouped(ctx); err != nil {
-			return err
-		}
+		s.resources.MarkStatsDirty()
 	}
 	return progressIfPresent(ctx, progress, int64(updated), int64(len(cloudLinks)), "ai media metadata completed")
 }
