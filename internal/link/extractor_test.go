@@ -636,6 +636,49 @@ S01 · 8集 · 2160p WEB-DL DDP HDR10 H.265 · 日韩动漫
 	}
 }
 
+func TestExtractMediaMetadataFromMarkerEmojiBracketedTitle(t *testing.T) {
+	text := `📅 8月6日
+
+🎬 ·✅【我的妈耶 (2026)】【4K高码率】【国语中字】
+
+类型：剧情片
+分享：4K精品影视
+💾 网盘：百度网盘
+
+📝 简介：
+十一（黄明昊 饰）从小由父亲张永勋（白客 饰）独自抚养长大，处于青春叛逆期的十一意外发现了一本「妈妈的日记」。
+
+·✅
+https://pan.quark.cn/s/5506607876da
+
+2026 · 4K HDR 高码率 · 喜剧片
+
+夸克网盘
+盘链交流群
+2026年8月6日 07:03`
+
+	links := NewExtractor().Extract(text)
+	if len(links) != 1 {
+		t.Fatalf("len = %d, want 1: %+v", len(links), links)
+	}
+	link := links[0]
+	if link.Type != "quark" {
+		t.Fatalf("type = %q, want quark", link.Type)
+	}
+	// Title is wrapped inside the leading 【】 bracket, with a "·✅" junk
+	// prefix before it — must resolve to the media name, not "·✅".
+	if link.MediaTitle != "我的妈耶" {
+		t.Fatalf("media title = %q, want 我的妈耶", link.MediaTitle)
+	}
+	// Note must not leak the 简介 synopsis sentence.
+	if link.Note != "我的妈耶" {
+		t.Fatalf("note = %q, want 我的妈耶", link.Note)
+	}
+	if link.MediaYear != "2026" || link.MediaCategory != "剧情片" {
+		t.Fatalf("year/category = %q/%q, want 2026/剧情片", link.MediaYear, link.MediaCategory)
+	}
+}
+
 func TestExtractMediaMetadataKeepsHeaderTitleWithProviderLabelOnLinkLine(t *testing.T) {
 	text := `🗄 速度与激情9 F9: The Fast Saga (2021)【4K SDR 无损超清】
 
