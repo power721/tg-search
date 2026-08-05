@@ -300,6 +300,26 @@ func (s *Service) RepairMediaTitles(ctx context.Context, sink repairProgressSink
 	if err != nil {
 		return summary, err
 	}
+	// Also catch purely-decorative junk titles ("·✅", "·✅✅✅") left by the old
+	// parser: they don't match the label signature, so pull short title==note
+	// rows and keep only the ones with no title text.
+	short, err := s.links.ListShortMediaTitleCandidates(ctx)
+	if err != nil {
+		return summary, err
+	}
+	existing := map[int64]struct{}{}
+	for i := range candidates {
+		existing[candidates[i].ID] = struct{}{}
+	}
+	for _, c := range short {
+		if _, ok := existing[c.ID]; ok {
+			continue
+		}
+		if link.IsDecorativeOnly(c.MediaTitle) {
+			candidates = append(candidates, c)
+			existing[c.ID] = struct{}{}
+		}
+	}
 	summary.Affected = len(candidates)
 	if sink != nil {
 		_ = sink.Progress(ctx, 0, int64(summary.Affected), fmt.Sprintf("scanned %d affected links", summary.Affected))

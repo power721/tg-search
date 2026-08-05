@@ -652,8 +652,8 @@ func isLowConfidenceNote(note string) bool {
 // matching opener or a leftover opener — i.e. a clipped bracket fragment.
 func hasUnmatchedBrackets(s string) bool {
 	var stack []rune
-	open := map[rune]struct{}{'[': {}, '【': {}, '(': {}, '（': {}}
-	match := map[rune]rune{']': '[', '】': '【', ')': '(', '）': '（'}
+	open := map[rune]struct{}{'[': {}, '【': {}, '(': {}, '（': {}, '《': {}}
+	match := map[rune]rune{']': '[', '】': '【', ')': '(', '）': '（', '》': '《'}
 	for _, r := range s {
 		if _, ok := open[r]; ok {
 			stack = append(stack, r)
@@ -913,6 +913,36 @@ func cleanMediaLine(line string) string {
 	return strings.TrimSpace(line)
 }
 
+// stripLeadingDecorative removes leading runes that are not letters, digits,
+// or opening brackets (《【[（(「『) — i.e. decorative emoji/symbols/punctuation
+// like "·🔥🔥🔥" or "✅" — stopping at the first character that can begin a
+// title. Returns "" when the string is entirely decorative.
+func stripLeadingDecorative(s string) string {
+	s = strings.TrimSpace(s)
+	for s != "" {
+		r, size := utf8.DecodeRuneInString(s)
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || isOpeningBracket(r) {
+			break
+		}
+		s = strings.TrimSpace(s[size:])
+	}
+	return s
+}
+
+func isOpeningBracket(r rune) bool {
+	switch r {
+	case '《', '【', '[', '（', '(', '「', '『':
+		return true
+	}
+	return false
+}
+
+// IsDecorativeOnly reports whether s is empty after stripping leading
+// decorative runes — i.e. it holds no title text (e.g. "·✅", "·✅✅✅").
+func IsDecorativeOnly(s string) bool {
+	return stripLeadingDecorative(s) == ""
+}
+
 func isResourceURLLine(line string) bool {
 	lower := strings.ToLower(line)
 	return strings.Contains(lower, "http://") || strings.Contains(lower, "https://") || strings.Contains(lower, "magnet:?") || strings.Contains(lower, "ed2k://")
@@ -949,6 +979,12 @@ func titleFromMarkerLine(markerLine, cleanLine string) (string, string) {
 	}
 	r, _ := utf8.DecodeRuneInString(trimmed)
 	if _, ok := titleMarkerEmojis[r]; !ok {
+		return "", ""
+	}
+	// Drop leading decorative junk (·, ✅, 🔥, …) so a wrapped title is
+	// reached: "·🔥🔥🔥《史前星球》…" → "《史前星球》…".
+	cleanLine = stripLeadingDecorative(cleanLine)
+	if cleanLine == "" {
 		return "", ""
 	}
 	if title, category := titleFromExplicitLine(cleanLine); title != "" {

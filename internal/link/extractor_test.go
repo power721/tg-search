@@ -709,6 +709,32 @@ https://pan.quark.cn/s/5506607876da`
 	}
 }
 
+func TestExtractMediaMetadataFromMarkerEmojiDecorativeJunkBeforeTitleBook(t *testing.T) {
+	text := `📅 8月6日
+
+🎬 ·🔥🔥🔥《史前星球》 1-3季全【4K 高码率】【内嵌中英双语字幕】【终极典藏版】
+
+类型：纪录片
+💾 网盘：百度网盘
+
+·✅
+https://pan.baidu.com/s/aaaaa`
+
+	links := NewExtractor().Extract(text)
+	if len(links) != 1 {
+		t.Fatalf("len = %d, want 1: %+v", len(links), links)
+	}
+	link := links[0]
+	// Leading decorative junk (·🔥🔥🔥) must be stripped and the 《》 title
+	// unwrapped to the bare name; the trailing "1-3季全" and 【】 tags dropped.
+	if link.MediaTitle != "史前星球" {
+		t.Fatalf("media title = %q, want 史前星球", link.MediaTitle)
+	}
+	if link.Note != "史前星球" {
+		t.Fatalf("note = %q, want 史前星球", link.Note)
+	}
+}
+
 func TestExtractMediaMetadataKeepsHeaderTitleWithProviderLabelOnLinkLine(t *testing.T) {
 	text := `🗄 速度与激情9 F9: The Fast Saga (2021)【4K SDR 无损超清】
 

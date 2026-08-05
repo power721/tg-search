@@ -142,6 +142,58 @@ func TestRepairMediaTitlesUpdatesNoteAlongsideTitle(t *testing.T) {
 	}
 }
 
+func TestRepairMediaTitlesFixesDecorativeJunkTitle(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(filepath.Join(t.TempDir(), "telegram.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+	if err := db.Migrate(ctx, conn); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	accounts := repository.NewAccountRepository(conn)
+	channels := repository.NewChannelRepository(conn)
+	messages := repository.NewMessageRepository(conn)
+	links := repository.NewLinkRepository(conn)
+	index := repository.NewResourceIndexRepository(conn)
+
+	accountID, _ := accounts.Save(ctx, model.Account{Phone: "+10000000003", Status: model.AccountStatusOnline})
+	channelID, _ := channels.Save(ctx, model.Channel{AccountID: accountID, TelegramChannelID: 3, Title: "panlink", Type: model.ChannelTypeChannel})
+	text := "🎬 ·✅【史前星球】【4K】【国语】\n类型：纪录片\n💾 网盘：百度网盘\n\n·✅✅✅\nhttps://pan.baidu.com/s/junk"
+	stored, err := messages.SaveBatch(ctx, []model.Message{{
+		AccountID: accountID, ChannelID: channelID, TelegramMessageID: 3,
+		Text: text, RawJSON: "{}", Date: time.Now().UTC(),
+	}})
+	if err != nil {
+		t.Fatalf("save message: %v", err)
+	}
+	msgID := stored[0].ID
+	// Old parser stored the decorative marker line as the title (and note).
+	if _, err := links.SaveBatch(ctx, msgID, []model.Link{
+		{Type: "baidu", URL: "https://pan.baidu.com/s/junk", MediaTitle: "·✅✅✅", Note: "·✅✅✅", SourceSnippet: "https://pan.baidu.com/s/junk"},
+	}); err != nil {
+		t.Fatalf("save links: %v", err)
+	}
+
+	service := NewService(links, nil, index, repository.NewMessageRepository(conn), link.NewExtractor())
+	summary, err := service.RepairMediaTitles(ctx, nil, false)
+	if err != nil {
+		t.Fatalf("RepairMediaTitles: %v", err)
+	}
+	if summary.Changed != 1 {
+		t.Fatalf("summary.Changed = %d, want 1 (junk title should be a candidate)", summary.Changed)
+	}
+
+	loaded, err := links.ListByMessage(ctx, msgID)
+	if err != nil {
+		t.Fatalf("ListByMessage: %v", err)
+	}
+	if loaded[0].MediaTitle != "史前星球" {
+		t.Fatalf("title = %q, want 史前星球", loaded[0].MediaTitle)
+	}
+}
+
 func TestRepairMediaTitlesDryRunWritesNothing(t *testing.T) {
 	ctx := context.Background()
 	conn, err := db.Open(filepath.Join(t.TempDir(), "telegram.db"))
