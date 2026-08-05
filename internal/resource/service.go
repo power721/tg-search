@@ -326,111 +326,121 @@ func (s *Service) RepairMediaTitles(ctx context.Context, sink repairProgressSink
 		_ = sink.Progress(ctx, 0, int64(summary.Affected), fmt.Sprintf("scanned %d affected links", summary.Affected))
 	}
 
-	seen := map[int64]struct{}{}
-	msgIDs := make([]int64, 0, len(candidates))
-	for _, c := range candidates {
-		if _, ok := seen[c.MessageID]; !ok {
-			seen[c.MessageID] = struct{}{}
-			msgIDs = append(msgIDs, c.MessageID)
-		}
-	}
-	texts, err := s.messages.BatchTextByMessageIDs(ctx, msgIDs)
-	if err != nil {
-		return summary, err
-	}
-
+	// Group candidates by message, preserving a stable message order, then
+	// process in batches. A channel can accumulate 100k+ stale titles; batching
+	// keeps each run bounded (fetch texts, write updates, and refresh the index
+	// a chunk at a time) so the task makes incremental progress instead of
+	// stalling on one giant pass.
 	byMessage := map[int64][]repository.MediaTitleCandidate{}
+	msgOrder := make([]int64, 0)
 	for _, c := range candidates {
+		if _, ok := byMessage[c.MessageID]; !ok {
+			msgOrder = append(msgOrder, c.MessageID)
+		}
 		byMessage[c.MessageID] = append(byMessage[c.MessageID], c)
 	}
+
+	const repairBatchSize = 500
 	type change struct {
 		id        int64
 		messageID int64
 		url       string
 		oldTitle  string
 		newTitle  string
-		oldNote   string
 		newNote   string
 	}
-	var changes []change
-	for messageID, messageLinks := range byMessage {
-		urlToTitle := map[string]string{}
-		urlToNote := map[string]string{}
-		if text := strings.TrimSpace(texts[messageID]); text != "" {
-			for _, parsed := range s.extractor.Extract(text) {
-				if parsed.URL != "" {
-					urlToTitle[parsed.URL] = parsed.MediaTitle
-					urlToNote[parsed.URL] = parsed.Note
-				}
-			}
-		}
-		for _, candidate := range messageLinks {
-			newTitle := urlToTitle[candidate.URL]
-			if newTitle == "" {
-				summary.Unchanged++
-				continue
-			}
-			newNote := urlToNote[candidate.URL]
-			if newNote == "" {
-				newNote = candidate.Note
-			}
-			// The provider-label bug clobbers both title and note to the same
-			// label, so repair both. Re-extraction with the fixed parser
-			// produces a different value; if it matches the stored values the
-			// parser is unchanged (e.g. old image still running) — skip.
-			if newTitle == candidate.MediaTitle && newNote == candidate.Note {
-				summary.Unchanged++
-				continue
-			}
-			changes = append(changes, change{
-				id: candidate.ID, messageID: candidate.MessageID,
-				url: candidate.URL, oldTitle: candidate.MediaTitle, newTitle: newTitle,
-				oldNote: candidate.Note, newNote: newNote,
-			})
-		}
-	}
-
-	if dryRun {
-		summary.Changed = len(changes)
-		if sink != nil {
-			_ = sink.Progress(ctx, int64(summary.Changed), int64(summary.Affected),
-				fmt.Sprintf("dry-run: would repair %d of %d titles", summary.Changed, summary.Affected))
-		}
-		return summary, nil
-	}
-
-	if sink != nil {
-		_ = sink.Progress(ctx, 0, int64(len(changes)), fmt.Sprintf("applying %d title updates", len(changes)))
-	}
-	for _, c := range changes {
-		if err := s.links.UpdateMediaTitleAndNote(ctx, c.id, c.newTitle, c.newNote); err != nil {
+	for start := 0; start < len(msgOrder); start += repairBatchSize {
+		if err := ctx.Err(); err != nil {
 			return summary, err
 		}
-		s.logger.Info("repaired media title",
-			zap.Int64("link_id", c.id),
-			zap.Int64("message_id", c.messageID),
-			zap.String("url", c.url),
-			zap.String("old", c.oldTitle),
-			zap.String("new", c.newTitle),
-		)
-	}
-	summary.Changed = len(changes)
-
-	changedSeen := map[int64]struct{}{}
-	changedMsgIDs := make([]int64, 0, len(changes))
-	for _, c := range changes {
-		if _, ok := changedSeen[c.messageID]; !ok {
-			changedSeen[c.messageID] = struct{}{}
-			changedMsgIDs = append(changedMsgIDs, c.messageID)
+		end := start + repairBatchSize
+		if end > len(msgOrder) {
+			end = len(msgOrder)
 		}
-	}
-	if err := s.index.RefreshMessages(ctx, changedMsgIDs); err != nil {
-		return summary, fmt.Errorf("refresh resource_index: %w", err)
-	}
-	summary.RefreshedMessages = len(changedMsgIDs)
-	if sink != nil {
-		_ = sink.Progress(ctx, int64(summary.Changed), int64(summary.Affected),
-			fmt.Sprintf("repaired %d of %d titles", summary.Changed, summary.Affected))
+		batchMsgIDs := msgOrder[start:end]
+		texts, err := s.messages.BatchTextByMessageIDs(ctx, batchMsgIDs)
+		if err != nil {
+			return summary, err
+		}
+
+		var changes []change
+		for _, messageID := range batchMsgIDs {
+			urlToTitle := map[string]string{}
+			urlToNote := map[string]string{}
+			if text := strings.TrimSpace(texts[messageID]); text != "" {
+				for _, parsed := range s.extractor.Extract(text) {
+					if parsed.URL != "" {
+						urlToTitle[parsed.URL] = parsed.MediaTitle
+						urlToNote[parsed.URL] = parsed.Note
+					}
+				}
+			}
+			for _, candidate := range byMessage[messageID] {
+				newTitle := urlToTitle[candidate.URL]
+				if newTitle == "" {
+					summary.Unchanged++
+					continue
+				}
+				newNote := urlToNote[candidate.URL]
+				if newNote == "" {
+					newNote = candidate.Note
+				}
+				// The provider-label bug clobbers both title and note to the same
+				// label, so repair both. Re-extraction with the fixed parser
+				// produces a different value; if it matches the stored values the
+				// parser is unchanged (e.g. old image still running) — skip.
+				if newTitle == candidate.MediaTitle && newNote == candidate.Note {
+					summary.Unchanged++
+					continue
+				}
+				changes = append(changes, change{
+					id: candidate.ID, messageID: candidate.MessageID, url: candidate.URL,
+					oldTitle: candidate.MediaTitle, newTitle: newTitle, newNote: newNote,
+				})
+			}
+		}
+
+		if dryRun {
+			summary.Changed += len(changes)
+			if sink != nil {
+				_ = sink.Progress(ctx, int64(summary.Changed), int64(summary.Affected),
+					fmt.Sprintf("dry-run: would repair %d of %d titles", summary.Changed, summary.Affected))
+			}
+			continue
+		}
+
+		for _, c := range changes {
+			if err := s.links.UpdateMediaTitleAndNote(ctx, c.id, c.newTitle, c.newNote); err != nil {
+				return summary, err
+			}
+			s.logger.Info("repaired media title",
+				zap.Int64("link_id", c.id),
+				zap.Int64("message_id", c.messageID),
+				zap.String("url", c.url),
+				zap.String("old", c.oldTitle),
+				zap.String("new", c.newTitle),
+			)
+		}
+		summary.Changed += len(changes)
+
+		changedSeen := map[int64]struct{}{}
+		changedMsgIDs := make([]int64, 0, len(changes))
+		for _, c := range changes {
+			if _, ok := changedSeen[c.messageID]; !ok {
+				changedSeen[c.messageID] = struct{}{}
+				changedMsgIDs = append(changedMsgIDs, c.messageID)
+			}
+		}
+		if len(changedMsgIDs) > 0 {
+			if err := s.index.RefreshMessages(ctx, changedMsgIDs); err != nil {
+				return summary, fmt.Errorf("refresh resource_index: %w", err)
+			}
+		}
+		summary.RefreshedMessages += len(changedMsgIDs)
+		if sink != nil {
+			_ = sink.Progress(ctx, int64(summary.Changed), int64(summary.Affected),
+				fmt.Sprintf("repaired %d of %d titles", summary.Changed, summary.Affected))
+		}
 	}
 	return summary, nil
 }
