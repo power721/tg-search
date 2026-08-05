@@ -232,9 +232,9 @@ ORDER BY l.message_id, l.id`)
 }
 
 // ListShortMediaTitleCandidates returns non-deleted link rows whose media_title
-// equals the note and is short (≤32 chars). This is a bounded superset that
-// includes purely-decorative junk titles (e.g. "·✅", "·✅✅✅") left by the old
-// parser; the caller filters with link.IsDecorativeOnly before re-extraction.
+// equals the note and is short (≤64 chars). This is a bounded superset that
+// includes decorative-junk and bracketed-fragment titles left by the old
+// parser; the caller filters with link.LooksLikeStaleTitle before re-extraction.
 func (r *LinkRepository) ListShortMediaTitleCandidates(ctx context.Context) ([]MediaTitleCandidate, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT l.id, l.message_id, l.url, COALESCE(l.media_title, ''), COALESCE(l.note, '')
@@ -243,7 +243,7 @@ JOIN telegram_messages m ON m.id = l.message_id
 WHERE m.deleted = 0
   AND l.media_title = l.note
   AND l.media_title <> ''
-  AND length(l.media_title) <= 32
+  AND length(l.media_title) <= 64
 ORDER BY l.message_id, l.id`)
 	if err != nil {
 		return nil, fmt.Errorf("list short media-title candidates: %w", err)
