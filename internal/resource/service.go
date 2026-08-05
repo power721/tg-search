@@ -300,9 +300,10 @@ func (s *Service) RepairMediaTitles(ctx context.Context, sink repairProgressSink
 	if err != nil {
 		return summary, err
 	}
-	// Also catch purely-decorative junk titles ("·✅", "·✅✅✅") left by the old
-	// parser: they don't match the label signature, so pull short title==note
-	// rows and keep only the ones with no title text.
+	// Also catch stale titles that don't match the label signature: decorative
+	// junk and bracketed fragments ("·✅", "·✅✅✅《蜂蜜的针", "·🔥🔥🔥《史前星球》…")
+	// left by the old parser. Pull short title==note rows and keep only the
+	// ones the current parser would not produce.
 	short, err := s.links.ListShortMediaTitleCandidates(ctx)
 	if err != nil {
 		return summary, err
@@ -315,7 +316,7 @@ func (s *Service) RepairMediaTitles(ctx context.Context, sink repairProgressSink
 		if _, ok := existing[c.ID]; ok {
 			continue
 		}
-		if link.IsDecorativeOnly(c.MediaTitle) {
+		if link.LooksLikeStaleTitle(c.MediaTitle) {
 			candidates = append(candidates, c)
 			existing[c.ID] = struct{}{}
 		}

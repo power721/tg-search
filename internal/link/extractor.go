@@ -937,10 +937,19 @@ func isOpeningBracket(r rune) bool {
 	return false
 }
 
-// IsDecorativeOnly reports whether s is empty after stripping leading
-// decorative runes — i.e. it holds no title text (e.g. "·✅", "·✅✅✅").
-func IsDecorativeOnly(s string) bool {
-	return stripLeadingDecorative(s) == ""
+// LooksLikeStaleTitle reports whether title is a value the current parser
+// would not produce — i.e. stale output from an older parser that the
+// media-title repair should re-derive. It matches titles with leading
+// decorative junk ("·✅", "·✅✅✅《蜂蜜的针", "·🔥🔥🔥《史前星球》 1-3季全") and
+// titles still wrapped in brackets the parser would unwrap ("《史前星球》").
+func LooksLikeStaleTitle(title string) bool {
+	if title == "" {
+		return false
+	}
+	if stripLeadingDecorative(title) != title {
+		return true
+	}
+	return strings.HasPrefix(title, "《") || strings.HasPrefix(title, "【") || strings.HasPrefix(title, "[")
 }
 
 func isResourceURLLine(line string) bool {

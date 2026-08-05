@@ -194,6 +194,111 @@ func TestRepairMediaTitlesFixesDecorativeJunkTitle(t *testing.T) {
 	}
 }
 
+func TestRepairMediaTitlesFixesProviderLabelOnLineAboveURL(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(filepath.Join(t.TempDir(), "telegram.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+	if err := db.Migrate(ctx, conn); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	accounts := repository.NewAccountRepository(conn)
+	channels := repository.NewChannelRepository(conn)
+	messages := repository.NewMessageRepository(conn)
+	links := repository.NewLinkRepository(conn)
+	index := repository.NewResourceIndexRepository(conn)
+
+	accountID, _ := accounts.Save(ctx, model.Account{Phone: "+10000000004", Status: model.AccountStatusOnline})
+	channelID, _ := channels.Save(ctx, model.Channel{AccountID: accountID, TelegramChannelID: 4, Title: "leoziyuan", Type: model.ChannelTypeChannel})
+	// The "网盘：光鸭网盘" label sits on the line ABOVE the URL, so source_snippet
+	// is the URL line and the snippet signature does not match — the row must
+	// still be selected via the LIKE '%网盘%' branch.
+	text := "🎬 虽然30但仍17[全32集][中文字幕].Thirty.But.Seventeen.S01.1080p.HamiVideo.WEB-DL.AAC2.0.H.264-BlackTV\n类型：韩国剧\n💾 网盘：光鸭网盘\n\n网盘：光鸭网盘\nhttps://www.guangyapan.com/s/label"
+	stored, err := messages.SaveBatch(ctx, []model.Message{{
+		AccountID: accountID, ChannelID: channelID, TelegramMessageID: 4,
+		Text: text, RawJSON: "{}", Date: time.Now().UTC(),
+	}})
+	if err != nil {
+		t.Fatalf("save message: %v", err)
+	}
+	msgID := stored[0].ID
+	if _, err := links.SaveBatch(ctx, msgID, []model.Link{
+		{Type: "guangya", URL: "https://www.guangyapan.com/s/label", MediaTitle: "网盘：光鸭网盘", Note: "网盘：光鸭网盘", SourceSnippet: "https://www.guangyapan.com/s/label"},
+	}); err != nil {
+		t.Fatalf("save links: %v", err)
+	}
+
+	service := NewService(links, nil, index, repository.NewMessageRepository(conn), link.NewExtractor())
+	summary, err := service.RepairMediaTitles(ctx, nil, false)
+	if err != nil {
+		t.Fatalf("RepairMediaTitles: %v", err)
+	}
+	if summary.Changed != 1 {
+		t.Fatalf("summary.Changed = %d, want 1", summary.Changed)
+	}
+	loaded, err := links.ListByMessage(ctx, msgID)
+	if err != nil {
+		t.Fatalf("ListByMessage: %v", err)
+	}
+	if loaded[0].MediaTitle != "虽然30但仍17" {
+		t.Fatalf("title = %q, want 虽然30但仍17", loaded[0].MediaTitle)
+	}
+}
+
+func TestRepairMediaTitlesFixesBracketedFragmentTitle(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(filepath.Join(t.TempDir(), "telegram.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+	if err := db.Migrate(ctx, conn); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	accounts := repository.NewAccountRepository(conn)
+	channels := repository.NewChannelRepository(conn)
+	messages := repository.NewMessageRepository(conn)
+	links := repository.NewLinkRepository(conn)
+	index := repository.NewResourceIndexRepository(conn)
+
+	accountID, _ := accounts.Save(ctx, model.Account{Phone: "+10000000005", Status: model.AccountStatusOnline})
+	channelID, _ := channels.Save(ctx, model.Channel{AccountID: accountID, TelegramChannelID: 5, Title: "panlink", Type: model.ChannelTypeChannel})
+	text := "🎬 ·✅✅✅《蜂蜜的针》【4K】【国语】\n类型：电影\n💾 网盘：夸克网盘\n\n·✅✅✅\nhttps://pan.quark.cn/s/frag"
+	stored, err := messages.SaveBatch(ctx, []model.Message{{
+		AccountID: accountID, ChannelID: channelID, TelegramMessageID: 5,
+		Text: text, RawJSON: "{}", Date: time.Now().UTC(),
+	}})
+	if err != nil {
+		t.Fatalf("save message: %v", err)
+	}
+	msgID := stored[0].ID
+	// Old parser stored a truncated bracket fragment (no leading-junk label
+	// signature, not a provider label) as the title.
+	if _, err := links.SaveBatch(ctx, msgID, []model.Link{
+		{Type: "quark", URL: "https://pan.quark.cn/s/frag", MediaTitle: "·✅✅✅《蜂蜜的针", Note: "·✅✅✅《蜂蜜的针", SourceSnippet: "https://pan.quark.cn/s/frag"},
+	}); err != nil {
+		t.Fatalf("save links: %v", err)
+	}
+
+	service := NewService(links, nil, index, repository.NewMessageRepository(conn), link.NewExtractor())
+	summary, err := service.RepairMediaTitles(ctx, nil, false)
+	if err != nil {
+		t.Fatalf("RepairMediaTitles: %v", err)
+	}
+	if summary.Changed != 1 {
+		t.Fatalf("summary.Changed = %d, want 1 (fragment title should be a candidate)", summary.Changed)
+	}
+	loaded, err := links.ListByMessage(ctx, msgID)
+	if err != nil {
+		t.Fatalf("ListByMessage: %v", err)
+	}
+	if loaded[0].MediaTitle != "蜂蜜的针" {
+		t.Fatalf("title = %q, want 蜂蜜的针", loaded[0].MediaTitle)
+	}
+}
+
 func TestRepairMediaTitlesDryRunWritesNothing(t *testing.T) {
 	ctx := context.Background()
 	conn, err := db.Open(filepath.Join(t.TempDir(), "telegram.db"))
