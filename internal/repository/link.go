@@ -231,6 +231,35 @@ ORDER BY l.message_id, l.id`)
 	return out, rows.Err()
 }
 
+// ListShortMediaTitleCandidates returns non-deleted link rows whose media_title
+// equals the note and is short (≤32 chars). This is a bounded superset that
+// includes purely-decorative junk titles (e.g. "·✅", "·✅✅✅") left by the old
+// parser; the caller filters with link.IsDecorativeOnly before re-extraction.
+func (r *LinkRepository) ListShortMediaTitleCandidates(ctx context.Context) ([]MediaTitleCandidate, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT l.id, l.message_id, l.url, COALESCE(l.media_title, ''), COALESCE(l.note, '')
+FROM telegram_links l
+JOIN telegram_messages m ON m.id = l.message_id
+WHERE m.deleted = 0
+  AND l.media_title = l.note
+  AND l.media_title <> ''
+  AND length(l.media_title) <= 32
+ORDER BY l.message_id, l.id`)
+	if err != nil {
+		return nil, fmt.Errorf("list short media-title candidates: %w", err)
+	}
+	defer rows.Close()
+	var out []MediaTitleCandidate
+	for rows.Next() {
+		var c MediaTitleCandidate
+		if err := rows.Scan(&c.ID, &c.MessageID, &c.URL, &c.MediaTitle, &c.Note); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 func (r *LinkRepository) Search(ctx context.Context, params LinkSearchParams) ([]model.LinkResult, error) {
 	limit := clampLimit(params.Limit, 50)
 	where, args := linkSearchWhere(params)
