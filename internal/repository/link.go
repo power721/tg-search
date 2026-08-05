@@ -172,6 +172,14 @@ func (r *LinkRepository) UpdateMediaTitle(ctx context.Context, id int64, title s
 	return nil
 }
 
+// UpdateMediaTitleAndNote updates media_title and note for a link by id.
+func (r *LinkRepository) UpdateMediaTitleAndNote(ctx context.Context, id int64, title, note string) error {
+	if _, err := r.db.ExecContext(ctx, `UPDATE telegram_links SET media_title = ?, note = ? WHERE id = ?`, title, note, id); err != nil {
+		return fmt.Errorf("update link media title and note: %w", err)
+	}
+	return nil
+}
+
 // MediaTitleCandidate is a link row whose media_title may have been clobbered by
 // a provider label, along with the data needed to re-derive the real title.
 type MediaTitleCandidate struct {

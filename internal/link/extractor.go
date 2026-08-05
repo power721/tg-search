@@ -637,13 +637,38 @@ func isLowConfidenceNote(note string) bool {
 	if strings.HasSuffix(normalized, "(") || strings.HasSuffix(normalized, "（") {
 		return true
 	}
-	// Synopsis/plot text leaked from a 简介 block, or a raw bracketed title
-	// line grabbed verbatim — neither is a usable link note; fall back to the
-	// cleaned media title instead.
+	// Synopsis/plot text leaked from a 简介 block, or a bracketed title/tag
+	// fragment grabbed verbatim, is not a usable link note; fall back to the
+	// cleaned media title. Matched brackets (e.g. "难哄 (2025) [全32集]…") are
+	// legitimate title text, so only reject fragments with unmatched brackets
+	// (e.g. "我的妈耶 (2026)】【4K高码率】…", where inferNote clipped the line).
 	if strings.ContainsAny(normalized, "。！？!?") {
 		return true
 	}
-	return strings.HasPrefix(normalized, "【") || strings.HasPrefix(normalized, "[")
+	return hasUnmatchedBrackets(note)
+}
+
+// hasUnmatchedBrackets reports whether s contains a closing bracket with no
+// matching opener or a leftover opener — i.e. a clipped bracket fragment.
+func hasUnmatchedBrackets(s string) bool {
+	var stack []rune
+	open := map[rune]struct{}{'[': {}, '【': {}, '(': {}, '（': {}}
+	match := map[rune]rune{']': '[', '】': '【', ')': '(', '）': '（'}
+	for _, r := range s {
+		if _, ok := open[r]; ok {
+			stack = append(stack, r)
+			continue
+		}
+		want, isClose := match[r]
+		if !isClose {
+			continue
+		}
+		if len(stack) == 0 || stack[len(stack)-1] != want {
+			return true
+		}
+		stack = stack[:len(stack)-1]
+	}
+	return len(stack) > 0
 }
 
 func noteMatchesMediaTitle(note string, mediaTitle string) bool {
@@ -1119,7 +1144,7 @@ func normalizeMediaTitle(raw string) string {
 	if idx := strings.Index(title, "|"); idx >= 0 {
 		title = strings.TrimSpace(title[:idx])
 	}
-	if idx := regexp.MustCompile(`（\s*\d+\s*集\s*）|\(\s*\d+\s*集\s*\)`).FindStringIndex(title); idx != nil {
+	if idx := regexp.MustCompile(`(?:（|\()\s*(?:[\d一二三四五六七八九十]+(?:\s*[-－~～至到]\s*[\d一二三四五六七八九十]+)?|全\s*\d+)\s*[季集]\s*(?:）|\))`).FindStringIndex(title); idx != nil {
 		title = title[:idx[0]]
 	}
 	title = regexp.MustCompile(`（完整版）|\(完整版\)|\[完整版\]|【完整版】`).ReplaceAllString(title, "")

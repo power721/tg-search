@@ -85,6 +85,63 @@ func TestRepairMediaTitlesFixesProviderLabelRows(t *testing.T) {
 	}
 }
 
+func TestRepairMediaTitlesUpdatesNoteAlongsideTitle(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(filepath.Join(t.TempDir(), "telegram.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+	if err := db.Migrate(ctx, conn); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	accounts := repository.NewAccountRepository(conn)
+	channels := repository.NewChannelRepository(conn)
+	messages := repository.NewMessageRepository(conn)
+	links := repository.NewLinkRepository(conn)
+	index := repository.NewResourceIndexRepository(conn)
+
+	accountID, _ := accounts.Save(ctx, model.Account{Phone: "+10000000002", Status: model.AccountStatusOnline})
+	channelID, _ := channels.Save(ctx, model.Channel{AccountID: accountID, TelegramChannelID: 2, Title: "panlink", Type: model.ChannelTypeChannel})
+	text := "🎬 ·✅【地球脉动（1-3季）】【4K】【国语】\n类型：纪录片\n💾 网盘：光鸭网盘\n网盘：https://pan.quark.cn/s/abc"
+	stored, err := messages.SaveBatch(ctx, []model.Message{{
+		AccountID: accountID, ChannelID: channelID, TelegramMessageID: 2,
+		Text: text, RawJSON: "{}", Date: time.Now().UTC(),
+	}})
+	if err != nil {
+		t.Fatalf("save message: %v", err)
+	}
+	msgID := stored[0].ID
+	// Stored row exhibits the provider-label bug: title and note both clobbered
+	// to "网盘", with the snippet beginning "<title>：".
+	if _, err := links.SaveBatch(ctx, msgID, []model.Link{
+		{Type: "quark", URL: "https://pan.quark.cn/s/abc", MediaTitle: "网盘", Note: "网盘", SourceSnippet: "网盘：https://pan.quark.cn/s/abc"},
+	}); err != nil {
+		t.Fatalf("save links: %v", err)
+	}
+
+	service := NewService(links, nil, index, repository.NewMessageRepository(conn), link.NewExtractor())
+	summary, err := service.RepairMediaTitles(ctx, nil, false)
+	if err != nil {
+		t.Fatalf("RepairMediaTitles: %v", err)
+	}
+	if summary.Changed != 1 {
+		t.Fatalf("summary.Changed = %d, want 1", summary.Changed)
+	}
+
+	loaded, err := links.ListByMessage(ctx, msgID)
+	if err != nil {
+		t.Fatalf("ListByMessage: %v", err)
+	}
+	if loaded[0].MediaTitle != "地球脉动" {
+		t.Fatalf("title = %q, want 地球脉动", loaded[0].MediaTitle)
+	}
+	// Note must be repaired too, not left as the "网盘" label.
+	if loaded[0].Note != "地球脉动" {
+		t.Fatalf("note = %q, want 地球脉动", loaded[0].Note)
+	}
+}
+
 func TestRepairMediaTitlesDryRunWritesNothing(t *testing.T) {
 	ctx := context.Background()
 	conn, err := db.Open(filepath.Join(t.TempDir(), "telegram.db"))
