@@ -30,6 +30,9 @@ func TestListMediaTitleLabelCandidates(t *testing.T) {
 	seed := []model.Link{
 		// bug row: provider label clobbered the title (media_title == note, snippet "光鸭：").
 		{Type: "guangya", URL: "https://www.guangyapan.com/s/abc", MediaTitle: "光鸭", Note: "光鸭", SourceSnippet: "光鸭：https://www.guangyapan.com/s/abc"},
+		// bug row: 网盘 label leaked from the line above the URL, so the snippet
+		// is the URL line itself (does not start with the title).
+		{Type: "guangya", URL: "https://www.guangyapan.com/s/label", MediaTitle: "网盘：光鸭网盘", Note: "网盘：光鸭网盘", SourceSnippet: "https://www.guangyapan.com/s/label"},
 		// clean row: title coincides with note but snippet uses a generic label.
 		{Type: "baidu", URL: "https://pan.baidu.com/s/x", MediaTitle: "莫离", Note: "莫离", SourceSnippet: "链接：https://pan.baidu.com/s/x"},
 		// ai-enriched row: media_title differs from note.
@@ -43,11 +46,18 @@ func TestListMediaTitleLabelCandidates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListMediaTitleLabelCandidates: %v", err)
 	}
-	if len(got) != 1 {
-		t.Fatalf("got %d candidates, want 1: %+v", len(got), got)
+	if len(got) != 2 {
+		t.Fatalf("got %d candidates, want 2: %+v", len(got), got)
 	}
-	if got[0].URL != "https://www.guangyapan.com/s/abc" || got[0].MediaTitle != "光鸭" {
-		t.Fatalf("candidate = %+v, want the 光鸭 guangya row", got[0])
+	byURL := map[string]MediaTitleCandidate{}
+	for _, c := range got {
+		byURL[c.URL] = c
+	}
+	if byURL["https://www.guangyapan.com/s/abc"].MediaTitle != "光鸭" {
+		t.Fatalf("guangya 光鸭 candidate missing: %+v", byURL)
+	}
+	if byURL["https://www.guangyapan.com/s/label"].MediaTitle != "网盘：光鸭网盘" {
+		t.Fatalf("网盘 label-line candidate missing: %+v", byURL)
 	}
 }
 

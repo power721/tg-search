@@ -191,10 +191,16 @@ type MediaTitleCandidate struct {
 }
 
 // ListMediaTitleLabelCandidates returns link rows exhibiting the provider-label
-// bug signature: media_title is non-empty, equals the link note, and the URL's
-// own line (source_snippet) begins with "<media_title><:>". This excludes
-// correctly-titled rows whose title merely coincides with the note (their
-// snippet starts with a generic label like 链接：/夸克：).
+// bug signature: media_title is non-empty and equals the link note. Two shapes
+// are matched:
+//   - the URL's own line (source_snippet) begins with "<media_title><:>" (a
+//     bare provider label like 光鸭/夸克 on the link line), and
+//   - media_title itself leaked a 网盘/云盘 provider label (e.g. "网盘：光鸭网盘"
+//     taken from the line above the URL, so source_snippet is the URL line).
+//
+// Correctly-titled rows whose title merely coincides with the note are excluded
+// (their snippet starts with a generic label like 链接：, and real titles do not
+// contain 网盘/云盘).
 func (r *LinkRepository) ListMediaTitleLabelCandidates(ctx context.Context) ([]MediaTitleCandidate, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT l.id, l.message_id, l.url, COALESCE(l.media_title, ''), COALESCE(l.note, '')
@@ -203,9 +209,12 @@ JOIN telegram_messages m ON m.id = l.message_id
 WHERE m.deleted = 0
   AND l.media_title = l.note
   AND l.media_title <> ''
-  AND length(l.source_snippet) > length(l.media_title)
-  AND substr(l.source_snippet, 1, length(l.media_title)) = l.media_title
-  AND substr(l.source_snippet, length(l.media_title) + 1, 1) IN ('：', ':')
+  AND (
+       ( length(l.source_snippet) > length(l.media_title)
+         AND substr(l.source_snippet, 1, length(l.media_title)) = l.media_title
+         AND substr(l.source_snippet, length(l.media_title) + 1, 1) IN ('：', ':') )
+    OR l.media_title LIKE '%网盘%' OR l.media_title LIKE '%云盘%'
+  )
 ORDER BY l.message_id, l.id`)
 	if err != nil {
 		return nil, fmt.Errorf("list media-title label candidates: %w", err)
