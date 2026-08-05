@@ -328,26 +328,43 @@ func (s *Service) RepairMediaTitles(ctx context.Context, sink repairProgressSink
 		url       string
 		oldTitle  string
 		newTitle  string
+		oldNote   string
+		newNote   string
 	}
 	var changes []change
 	for messageID, messageLinks := range byMessage {
 		urlToTitle := map[string]string{}
+		urlToNote := map[string]string{}
 		if text := strings.TrimSpace(texts[messageID]); text != "" {
 			for _, parsed := range s.extractor.Extract(text) {
 				if parsed.URL != "" {
 					urlToTitle[parsed.URL] = parsed.MediaTitle
+					urlToNote[parsed.URL] = parsed.Note
 				}
 			}
 		}
 		for _, candidate := range messageLinks {
 			newTitle := urlToTitle[candidate.URL]
-			if newTitle == "" || newTitle == candidate.MediaTitle {
+			if newTitle == "" {
+				summary.Unchanged++
+				continue
+			}
+			newNote := urlToNote[candidate.URL]
+			if newNote == "" {
+				newNote = candidate.Note
+			}
+			// The provider-label bug clobbers both title and note to the same
+			// label, so repair both. Re-extraction with the fixed parser
+			// produces a different value; if it matches the stored values the
+			// parser is unchanged (e.g. old image still running) — skip.
+			if newTitle == candidate.MediaTitle && newNote == candidate.Note {
 				summary.Unchanged++
 				continue
 			}
 			changes = append(changes, change{
 				id: candidate.ID, messageID: candidate.MessageID,
 				url: candidate.URL, oldTitle: candidate.MediaTitle, newTitle: newTitle,
+				oldNote: candidate.Note, newNote: newNote,
 			})
 		}
 	}
@@ -365,7 +382,7 @@ func (s *Service) RepairMediaTitles(ctx context.Context, sink repairProgressSink
 		_ = sink.Progress(ctx, 0, int64(len(changes)), fmt.Sprintf("applying %d title updates", len(changes)))
 	}
 	for _, c := range changes {
-		if err := s.links.UpdateMediaTitle(ctx, c.id, c.newTitle); err != nil {
+		if err := s.links.UpdateMediaTitleAndNote(ctx, c.id, c.newTitle, c.newNote); err != nil {
 			return summary, err
 		}
 		s.logger.Info("repaired media title",

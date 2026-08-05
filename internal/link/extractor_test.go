@@ -679,6 +679,36 @@ https://pan.quark.cn/s/5506607876da
 	}
 }
 
+func TestExtractMediaMetadataFromMarkerEmojiBracketedSeasonTitle(t *testing.T) {
+	text := `📅 8月6日
+
+🎬 ·✅✅✅【地球脉动（1-3季）】【4k+1080P】【国语+英语，双语发音】【典藏版】
+
+类型：纪录片
+分享：盘链
+💾 网盘：夸克网盘
+
+·✅✅✅
+https://pan.quark.cn/s/5506607876da`
+
+	links := NewExtractor().Extract(text)
+	if len(links) != 1 {
+		t.Fatalf("len = %d, want 1: %+v", len(links), links)
+	}
+	link := links[0]
+	// Title sits inside the leading 【】, with a "·✅✅✅" junk prefix and a
+	// （1-3季） season suffix; must resolve to the bare name.
+	if link.MediaTitle != "地球脉动" {
+		t.Fatalf("media title = %q, want 地球脉动", link.MediaTitle)
+	}
+	if link.Note != "地球脉动" {
+		t.Fatalf("note = %q, want 地球脉动", link.Note)
+	}
+	if link.MediaCategory != "纪录片" {
+		t.Fatalf("category = %q, want 纪录片", link.MediaCategory)
+	}
+}
+
 func TestExtractMediaMetadataKeepsHeaderTitleWithProviderLabelOnLinkLine(t *testing.T) {
 	text := `🗄 速度与激情9 F9: The Fast Saga (2021)【4K SDR 无损超清】
 
