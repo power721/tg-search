@@ -634,7 +634,16 @@ func isLowConfidenceNote(note string) bool {
 	if strings.HasPrefix(normalized, "链接") || strings.HasPrefix(normalized, "直达链接") {
 		return true
 	}
-	return strings.HasSuffix(normalized, "(") || strings.HasSuffix(normalized, "（")
+	if strings.HasSuffix(normalized, "(") || strings.HasSuffix(normalized, "（") {
+		return true
+	}
+	// Synopsis/plot text leaked from a 简介 block, or a raw bracketed title
+	// line grabbed verbatim — neither is a usable link note; fall back to the
+	// cleaned media title instead.
+	if strings.ContainsAny(normalized, "。！？!?") {
+		return true
+	}
+	return strings.HasPrefix(normalized, "【") || strings.HasPrefix(normalized, "[")
 }
 
 func noteMatchesMediaTitle(note string, mediaTitle string) bool {
@@ -921,14 +930,63 @@ func titleFromMarkerLine(markerLine, cleanLine string) (string, string) {
 		return title, category
 	}
 	if title, category := titleFromPlainLineMaxLength(cleanLine, -1); title != "" {
-		// Drop bracketed release tags ([全8集][简繁英字幕].Drops.of.God.S01…)
-		// so only the leading name segment remains as the title.
-		if idx := strings.IndexAny(cleanLine, "[【"); idx > 0 {
-			return normalizeMediaTitle(strings.TrimSpace(cleanLine[:idx])), category
+		// Reduce bracketed release tags to just the media name. The name can
+		// either precede the brackets ("神之水滴[全8集]…") or be wrapped inside
+		// the leading bracket ("·✅【我的妈耶 (2026)】…"), so titleFromBracketedLine
+		// handles both.
+		if name := titleFromBracketedLine(cleanLine); name != "" {
+			return name, category
 		}
 		return title, category
 	}
 	return "", ""
+}
+
+// titleFromBracketedLine reduces a marker title line to its media name by
+// dropping bracketed tag groups. If readable text precedes the first bracket
+// it is the name ("神之水滴[全8集][简繁英字幕]…" → "神之水滴"); otherwise the name
+// is taken from inside the leading bracket ("·✅【我的妈耶 (2026)】【4K高码率】…"
+// → "我的妈耶"). Returns "" when no bracket is present.
+func titleFromBracketedLine(line string) string {
+	idx := strings.IndexAny(line, "[【")
+	if idx < 0 {
+		return ""
+	}
+	before := strings.TrimSpace(line[:idx])
+	if hasMediaText(before) {
+		return normalizeMediaTitle(before)
+	}
+	inner := firstBracketInner(line[idx:])
+	if inner == "" {
+		return ""
+	}
+	return normalizeMediaTitle(inner)
+}
+
+// hasMediaText reports whether s contains a letter or digit (i.e. real title
+// content rather than only symbols/punctuation like "·✅").
+func hasMediaText(s string) bool {
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return true
+		}
+	}
+	return false
+}
+
+// firstBracketInner returns the content inside the leading [] or 【】 group.
+func firstBracketInner(s string) string {
+	switch {
+	case strings.HasPrefix(s, "【"):
+		if end := strings.Index(s, "】"); end > len("【") {
+			return strings.TrimSpace(s[len("【"):end])
+		}
+	case strings.HasPrefix(s, "["):
+		if end := strings.Index(s, "]"); end > 1 {
+			return strings.TrimSpace(s[1:end])
+		}
+	}
+	return ""
 }
 
 func titleFromExplicitLine(line string) (string, string) {
