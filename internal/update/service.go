@@ -260,6 +260,17 @@ func (s *Service) runListener(ctx context.Context, token uint64, account model.A
 		}
 		s.logger.Warn("telegram update listener stopped", zap.Int64("account_id", account.ID), zap.Error(err))
 		classification := retry.Classify(err)
+		// gotd surfaces transient connection drops — e.g. ping "pong missed"
+		// and RPC "engine forcibly closed" — as wrapped context.Canceled /
+		// context.DeadlineExceeded errors produced by its own internal
+		// goroutines. The listener context was already checked above, so a
+		// context error reaching here is gotd's connection lifecycle, not a
+		// real shutdown: reconnect instead of treating it as a permanent
+		// failure that stops syncing until a manual restart.
+		if classification.Kind == retry.KindPermanent && ctx.Err() == nil &&
+			(errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+			classification.Kind = retry.KindTemporary
+		}
 		if classification.Kind == retry.KindAuth {
 			if s.accounts != nil {
 				if updateErr := s.accounts.UpdateStatus(ctx, account.ID, model.AccountStatusLoginRequired); updateErr != nil {

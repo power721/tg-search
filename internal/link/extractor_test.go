@@ -577,6 +577,65 @@ https://pan.baidu.com/s/10dWJ_mLAqiBruTnSxFjrow?pwd=1111`
 	}
 }
 
+func TestExtractMediaMetadataFromMarkerEmojiLongReleaseFilename(t *testing.T) {
+	text := `📅 8月6日
+
+🎬 神之水滴[全8集][简繁英字幕].Drops.of.God.S01.2160p.Apple.TV+.WEB-DL.DDP.5.1.Atmos.HDR10+.H.265-BlackTV
+
+类型：日韩动漫
+分享：wxyz12322
+💾 网盘：光鸭网盘
+🔑 提取码：-
+
+📝 简介：
+星期五 更1世界顶级葡萄酒评论家神咲丰多香去世以后，留下了价值20亿日圆的丰厚遗产和一封遗书。
+
+更多资源：https://pinglian.lol/
+
+---
+网盘：光鸭网盘
+https://www.guangyapan.com/s/1932101531453419544_aeXMzSa0Twth-O73
+
+S01 · 8集 · 2160p WEB-DL DDP HDR10 H.265 · 日韩动漫
+
+光鸭云盘
+盘链交流群
+2026年8月6日 06:46`
+
+	links := NewExtractor().Extract(text)
+	if len(links) != 2 {
+		t.Fatalf("len = %d, want 2: %+v", len(links), links)
+	}
+	// Message-level metadata: the title must be the media name, not the
+	// "网盘：光鸭网盘" provider label that previously leaked in because the
+	// long release filename exceeded the plain-line length guard.
+	for _, link := range links {
+		if link.MediaTitle != "神之水滴" {
+			t.Fatalf("media title = %q, want 神之水滴", link.MediaTitle)
+		}
+		if link.MediaCategory != "日韩动漫" {
+			t.Fatalf("category = %q, want 日韩动漫", link.MediaCategory)
+		}
+		if link.MediaSeason != "S01" || link.MediaEpisode != "8集" {
+			t.Fatalf("season/episode = %q/%q, want S01/8集", link.MediaSeason, link.MediaEpisode)
+		}
+	}
+	// The actual resource (guangyapan) link must carry the media name as its
+	// note too — previously it inherited "网盘：光鸭网盘".
+	resourceFound := false
+	for _, link := range links {
+		if link.Type == "guangya" {
+			resourceFound = true
+			if link.Note != "神之水滴" {
+				t.Fatalf("resource note = %q, want 神之水滴", link.Note)
+			}
+		}
+	}
+	if !resourceFound {
+		t.Fatalf("no guangyapan resource link found: %+v", links)
+	}
+}
+
 func TestExtractMediaMetadataKeepsHeaderTitleWithProviderLabelOnLinkLine(t *testing.T) {
 	text := `🗄 速度与激情9 F9: The Fast Saga (2021)【4K SDR 无损超清】
 

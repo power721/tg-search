@@ -606,6 +606,9 @@ func isMetadataLine(value string) bool {
 		"访问码":    {},
 		"标签":     {},
 		"搜索结果":   {},
+		"网盘":     {},
+		"云盘":     {},
+		"网盘名称":   {},
 	}
 	_, ok := metadataLabels[normalized]
 	return ok
@@ -709,7 +712,10 @@ func extractMediaMetadata(text string) mediaMetadata {
 			metadata.Category = categoryFromLine(clean)
 		}
 		if metadata.Title == "" {
-			title, category := titleFromExplicitLine(clean)
+			title, category := titleFromMarkerLine(line, clean)
+			if title == "" {
+				title, category = titleFromExplicitLine(clean)
+			}
 			if title == "" {
 				title, category = titleFromPlainLine(clean)
 			}
@@ -882,6 +888,49 @@ func isCatalogItemLine(line string) bool {
 	return regexp.MustCompile(`^\d+\s*[.、．]\s*.+`).MatchString(strings.TrimSpace(line))
 }
 
+// titleMarkerEmojis flag a line as the resource title (🎬, 📺, 🗄 header, …).
+// Unlike 💾 (网盘) or 📝 (简介), these mark the media name itself.
+var titleMarkerEmojis = map[rune]struct{}{
+	'🎬': {}, // clapper board
+	'🎥': {}, // movie camera
+	'📺': {}, // television
+	'🗄': {}, // file cabinet (channel header)
+	'🎞': {}, // film frames
+	'📀': {}, // DVD
+	'📼': {}, // videocassette
+	'🎮': {}, // video game
+}
+
+// titleFromMarkerLine resolves a title when markerLine begins with a title
+// marker emoji. The emoji is detected on the raw line (cleanMediaLine strips
+// it); the title is parsed from cleanLine so existing 《…》, "类型：名" and
+// short-line behavior is unchanged. The length cap is bypassed (a marker is
+// an explicit title signal, so a long release filename is accepted), but all
+// other content guards still apply — a decorative marker like "📺 影片更新通知~"
+// is rejected and the real title is found on a later line.
+func titleFromMarkerLine(markerLine, cleanLine string) (string, string) {
+	trimmed := strings.TrimSpace(markerLine)
+	if trimmed == "" {
+		return "", ""
+	}
+	r, _ := utf8.DecodeRuneInString(trimmed)
+	if _, ok := titleMarkerEmojis[r]; !ok {
+		return "", ""
+	}
+	if title, category := titleFromExplicitLine(cleanLine); title != "" {
+		return title, category
+	}
+	if title, category := titleFromPlainLineMaxLength(cleanLine, -1); title != "" {
+		// Drop bracketed release tags ([全8集][简繁英字幕].Drops.of.God.S01…)
+		// so only the leading name segment remains as the title.
+		if idx := strings.IndexAny(cleanLine, "[【"); idx > 0 {
+			return normalizeMediaTitle(strings.TrimSpace(cleanLine[:idx])), category
+		}
+		return title, category
+	}
+	return "", ""
+}
+
 func titleFromExplicitLine(line string) (string, string) {
 	category := ""
 	if match := regexp.MustCompile(`^《([^》]+)》\s*(.+)$`).FindStringSubmatch(line); len(match) == 3 {
@@ -921,6 +970,13 @@ func isMediaCategoryLabel(value string) bool {
 }
 
 func titleFromPlainLine(line string) (string, string) {
+	return titleFromPlainLineMaxLength(line, 80)
+}
+
+// titleFromPlainLineMaxLength is titleFromPlainLine with an optional length
+// cap. A maxLen <= 0 disables the cap so an explicit title marker emoji can
+// still accept a long release filename while keeping every other guard.
+func titleFromPlainLineMaxLength(line string, maxLen int) (string, string) {
 	lower := strings.ToLower(line)
 	if strings.Contains(line, "://") || strings.Contains(lower, "magnet:?") || isLinkLabel(line) || isMetadataLine(line) {
 		return "", ""
@@ -940,7 +996,7 @@ func titleFromPlainLine(line string) (string, string) {
 	if regexp.MustCompile(`(?i)^(?:\d{3,4}p|4K|8K|WEB|WEB[- ]?DL|NF|Netflix|DV|HDR|SDR)\b`).MatchString(line) {
 		return "", ""
 	}
-	if utf8.RuneCountInString(line) > 80 {
+	if maxLen > 0 && utf8.RuneCountInString(line) > maxLen {
 		return "", ""
 	}
 	normalized := normalizeMediaTitle(line)
