@@ -1016,7 +1016,9 @@ func titleFromMarkerLine(markerLine, cleanLine string) (string, string) {
 // dropping bracketed tag groups. If readable text precedes the first bracket
 // it is the name ("神之水滴[全8集][简繁英字幕]…" → "神之水滴"); otherwise the name
 // is taken from inside the leading bracket ("·✅【我的妈耶 (2026)】【4K高码率】…"
-// → "我的妈耶"). Returns "" when no bracket is present.
+// → "我的妈耶"). The bracket content is itself run through the explicit-line
+// parser so a doubly-wrapped title unwraps fully ("【《悬案》2026】…" → "悬案").
+// Returns "" when no bracket is present.
 func titleFromBracketedLine(line string) string {
 	idx := strings.IndexAny(line, "[【")
 	if idx < 0 {
@@ -1029,6 +1031,10 @@ func titleFromBracketedLine(line string) string {
 	inner := firstBracketInner(line[idx:])
 	if inner == "" {
 		return ""
+	}
+	if t, category := titleFromExplicitLine(inner); t != "" {
+		_ = category
+		return t
 	}
 	return normalizeMediaTitle(inner)
 }

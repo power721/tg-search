@@ -735,6 +735,40 @@ https://pan.baidu.com/s/aaaaa`
 	}
 }
 
+func TestExtractMediaMetadataFromMarkerEmojiDoublyWrappedBookTitle(t *testing.T) {
+	text := `📅 7月20日
+
+🎬 ✅【《悬案》2026】【更新至09集】【4k高码率】【纯净分享】【订阅-自动更新】
+
+类型：国产剧
+分享：4K精品影视
+💾 网盘：夸克网盘
+
+📝 简介：
+该剧以2016年公安部刑侦局的行动为基础改编。
+
+更多资源：https://pinglian.lol/
+https://pan.quark.cn/s/d679e153edac`
+
+	links := NewExtractor().Extract(text)
+	if len(links) != 2 {
+		t.Fatalf("len = %d, want 2: %+v", len(links), links)
+	}
+	for _, link := range links {
+		if link.Type != "quark" {
+			continue
+		}
+		// Title is double-wrapped 【《悬案》2026】 — must fully unwrap the
+		// inner 《》 and drop the year, not stop at "《悬案》2026".
+		if link.MediaTitle != "悬案" {
+			t.Fatalf("media title = %q, want 悬案", link.MediaTitle)
+		}
+		if link.Note != "悬案" {
+			t.Fatalf("note = %q, want 悬案", link.Note)
+		}
+	}
+}
+
 func TestExtractMediaMetadataKeepsHeaderTitleWithProviderLabelOnLinkLine(t *testing.T) {
 	text := `🗄 速度与激情9 F9: The Fast Saga (2021)【4K SDR 无损超清】
 
