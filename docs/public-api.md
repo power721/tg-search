@@ -174,7 +174,8 @@ curl "http://127.0.0.1:9900/api/check/links" \
         "url": "https://pan.quark.cn/s/xxxx",
         "password": "abcd",
         "state": "ok",
-        "summary": "链接有效"
+        "summary": "链接有效",
+        "size_bytes": 42704901049
       }
     ],
     "grouped": {
@@ -184,7 +185,8 @@ curl "http://127.0.0.1:9900/api/check/links" \
           "url": "https://pan.quark.cn/s/xxxx",
           "password": "abcd",
           "state": "ok",
-          "summary": "链接有效"
+          "summary": "链接有效",
+          "size_bytes": 42704901049
         }
       ]
     }
@@ -201,6 +203,8 @@ curl "http://127.0.0.1:9900/api/check/links" \
 | `locked` | 需要提取码，或提取码错误/缺失。 |
 | `unsupported` | 当前网盘类型暂不支持检测。 |
 | `uncertain` | 请求失败、超时或无法确认状态。 |
+
+有效结果可能额外返回 `size_bytes`，表示网盘接口报告的分享大小，单位为字节。夸克、115 和 UC 可直接返回分享总大小；123、百度和天翼会使用一次根目录请求返回的文件/文件夹大小，多个根节点直接累加，但不会进入子目录。123 根目录仍有后续分页时不会返回不完整的大小。
 
 ## 7. RSS Feed
 

@@ -75,7 +75,7 @@ func (c *HTTPChecker) Check(ctx context.Context, item Item) Result {
 	case "123":
 		return c.check123(ctx, item)
 	case "uc":
-		return c.checkPageKeywords(ctx, item, []string{"失效", "不存在", "违规", "删除", "已过期", "被取消"}, []string{"提取码", "访问码", "请输入密码"}, []string{"文件", "分享", "drive.uc.cn"})
+		return c.checkUC(ctx, item)
 	case "xunlei":
 		return c.checkXunlei(ctx, item)
 	case "115":
@@ -85,6 +85,79 @@ func (c *HTTPChecker) Check(ctx context.Context, item Item) Result {
 	default:
 		return resultFor(item, StateUnsupported, "当前平台暂不支持检测")
 	}
+}
+
+func (c *HTTPChecker) checkUC(ctx context.Context, item Item) Result {
+	shareID := regexpFirst(item.URL, `/s/([A-Za-z0-9]+)`)
+	if shareID == "" {
+		return resultFor(item, StateUncertain, "无法解析分享地址")
+	}
+	password := firstNonEmpty(item.Password, queryValue(item.URL, "password"), queryValue(item.URL, "pwd"), queryValue(item.URL, "passcode"))
+	tokenURL := "https://pc-api.uc.cn/1/clouddrive/share/sharepage/token?entry=ft&fr=pc&pr=UCBrowser"
+	body, _, err := c.jsonRequest(ctx, http.MethodPost, tokenURL, map[string]any{
+		"pwd_id":             shareID,
+		"passcode":           password,
+		"share_for_transfer": true,
+	}, map[string]string{
+		"accept":       "application/json, text/plain, */*",
+		"content-type": "application/json;charset=UTF-8",
+		"origin":       "https://drive.uc.cn",
+		"referer":      "https://drive.uc.cn/",
+	})
+	if err != nil {
+		return requestFailure(ctx, item)
+	}
+	var token struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+		Data    struct {
+			Stoken string `json:"stoken"`
+		} `json:"data"`
+	}
+	_ = json.Unmarshal(body, &token)
+	switch token.Code {
+	case 0:
+	case 41008:
+		return resultFor(item, StateLocked, "需要提取码")
+	case 41004, 41010, 41011:
+		return resultFor(item, StateBad, "链接失效")
+	default:
+		return stateFromMessage(item, token.Message)
+	}
+	if token.Data.Stoken == "" {
+		return resultFor(item, StateUncertain, "访问令牌缺失")
+	}
+	detailURL := fmt.Sprintf("https://pc-api.uc.cn/1/clouddrive/transfer_share/detail?entry=ft&pwd_id=%s&pdir_fid=0&fetch_file_list=1&passcode=%s&_page=1&_size=50&_fetch_total=1&_fetch_task=1&_fetch_share=1&_sort=&stoken=%s&fr=pc&pr=UCBrowser", url.QueryEscape(shareID), url.QueryEscape(password), url.QueryEscape(token.Data.Stoken))
+	detailBody, _, err := c.request(ctx, http.MethodGet, detailURL, nil, map[string]string{
+		"accept":  "application/json, text/plain, */*",
+		"origin":  "https://drive.uc.cn",
+		"referer": "https://drive.uc.cn/",
+	})
+	if err != nil {
+		return requestFailure(ctx, item)
+	}
+	var detail struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+		Data    struct {
+			List  []any `json:"list"`
+			Share struct {
+				Size             int64 `json:"size"`
+				PartialViolation bool  `json:"partial_violation"`
+			} `json:"share"`
+		} `json:"data"`
+	}
+	_ = json.Unmarshal(detailBody, &detail)
+	if detail.Code != 0 {
+		return stateFromMessage(item, detail.Message)
+	}
+	if len(detail.Data.List) == 0 && detail.Data.Share.Size <= 0 {
+		return resultFor(item, StateBad, "链接失效")
+	}
+	if detail.Data.Share.PartialViolation {
+		return resultWithSize(item, StateOK, "链接有效但部分文件违规", detail.Data.Share.Size)
+	}
+	return resultWithSize(item, StateOK, "链接有效", detail.Data.Share.Size)
 }
 
 func (c *HTTPChecker) checkAliyun(ctx context.Context, item Item) Result {
@@ -187,8 +260,9 @@ func (c *HTTPChecker) checkQuark(ctx context.Context, item Item) Result {
 			List     []any `json:"list"`
 			IsExpire bool  `json:"is_expire"`
 			Share    struct {
-				Status           int  `json:"status"`
-				PartialViolation bool `json:"partial_violation"`
+				Status           int   `json:"status"`
+				PartialViolation bool  `json:"partial_violation"`
+				Size             int64 `json:"size"`
 			} `json:"share"`
 		} `json:"data"`
 	}
@@ -196,13 +270,14 @@ func (c *HTTPChecker) checkQuark(ctx context.Context, item Item) Result {
 	if detail.Code != 0 {
 		return stateFromMessage(item, detail.Message)
 	}
-	if len(detail.Data.List) == 0 || detail.Data.IsExpire || detail.Data.Share.Status > 1 && detail.Data.Share.Status != 3 {
+	share := detail.Data.Share
+	if len(detail.Data.List) == 0 || detail.Data.IsExpire || share.Status > 1 && share.Status != 3 {
 		return resultFor(item, StateBad, "链接失效")
 	}
-	if detail.Data.Share.PartialViolation {
-		return resultFor(item, StateOK, "链接有效但部分文件违规")
+	if share.PartialViolation {
+		return resultWithSize(item, StateOK, "链接有效但部分文件违规", share.Size)
 	}
-	return resultFor(item, StateOK, "链接有效")
+	return resultWithSize(item, StateOK, "链接有效", share.Size)
 }
 
 func (c *HTTPChecker) checkBaidu(ctx context.Context, item Item) Result {
@@ -239,7 +314,7 @@ func (c *HTTPChecker) checkBaidu(ctx context.Context, item Item) Result {
 		}
 		headers["cookie"] = "BDCLND=" + verify.Randsk
 	}
-	listURL := fmt.Sprintf("https://pan.baidu.com/share/list?web=1&page=1&num=20&order=time&desc=1&showempty=0&shorturl=%s&root=1&clienttype=0", url.QueryEscape(shortURL))
+	listURL := fmt.Sprintf("https://pan.baidu.com/share/list?web=1&page=1&num=100&order=time&desc=1&showempty=0&shorturl=%s&root=1&clienttype=0", url.QueryEscape(shortURL))
 	body, _, err := c.request(ctx, http.MethodGet, listURL, nil, headers)
 	if err != nil {
 		return requestFailure(ctx, item)
@@ -247,13 +322,21 @@ func (c *HTTPChecker) checkBaidu(ctx context.Context, item Item) Result {
 	var list struct {
 		Errno  int    `json:"errno"`
 		Errmsg string `json:"errmsg"`
-		List   []any  `json:"list"`
+		List   []struct {
+			Size int64 `json:"size"`
+		} `json:"list"`
 	}
 	_ = json.Unmarshal(body, &list)
 	switch list.Errno {
 	case 0:
 		if len(list.List) > 0 {
-			return resultFor(item, StateOK, "链接有效")
+			var sizeBytes int64
+			for _, entry := range list.List {
+				if entry.Size > 0 {
+					sizeBytes += entry.Size
+				}
+			}
+			return resultWithSize(item, StateOK, "链接有效", sizeBytes)
 		}
 		return resultFor(item, StateBad, "链接失效")
 	case -9, -12:
@@ -286,10 +369,11 @@ func (c *HTTPChecker) checkTianyi(ctx context.Context, item Item) Result {
 		NeedAccessCode int      `xml:"needAccessCode"`
 		ShareID        int64    `xml:"shareId"`
 		FileName       string   `xml:"fileName"`
+		FileSize       int64    `xml:"fileSize"`
 	}
 	if err := xml.Unmarshal(body, &share); err == nil && share.XMLName.Local == "shareVO" {
 		if share.ShareID > 0 || share.FileName != "" || share.NeedAccessCode == 1 {
-			return resultFor(item, StateOK, "链接有效")
+			return resultWithSize(item, StateOK, "链接有效", share.FileSize)
 		}
 	}
 	return stateFromMessage(item, string(body))
@@ -300,12 +384,15 @@ func (c *HTTPChecker) check123(ctx context.Context, item Item) Result {
 	if shareKey == "" {
 		return resultFor(item, StateUncertain, "无法解析分享地址")
 	}
-	// The share/info API resolves by shareKey globally, so every link hits one
-	// canonical host regardless of its per-user <id>.share.123pan.cn subdomain.
-	// Collapsing onto a single host lets a batch reuse connections (HTTP/2
-	// multiplexing) instead of paying a cold DNS+TLS handshake per subdomain,
-	// which turned 30 links into ~4.5s.
-	body, status, err := c.request(ctx, http.MethodGet, pan123ShareInfoAPI+"?shareKey="+url.QueryEscape(shareKey), nil, nil)
+	password := firstNonEmpty(item.Password, queryValue(item.URL, "pwd"), queryValue(item.URL, "password"))
+	// Use one canonical list endpoint for both validity and root-size detection.
+	// This preserves connection reuse across per-user share subdomains and avoids
+	// adding a second round trip after the original share/info check.
+	listURL := fmt.Sprintf("%s?limit=100&next=0&orderBy=file_name&orderDirection=asc&shareKey=%s&SharePwd=%s&ParentFileId=0&Page=1", pan123ShareListAPI, url.QueryEscape(shareKey), url.QueryEscape(password))
+	body, status, err := c.request(ctx, http.MethodGet, listURL, nil, map[string]string{
+		"origin":  "https://www.123684.com",
+		"referer": "https://www.123684.com/",
+	})
 	if err != nil {
 		return requestFailure(ctx, item)
 	}
@@ -313,22 +400,49 @@ func (c *HTTPChecker) check123(ctx context.Context, item Item) Result {
 		return resultFor(item, StateOK, "链接有效")
 	}
 	var response struct {
-		Code int `json:"code"`
-		Data struct {
-			HasPwd bool `json:"HasPwd"`
-		} `json:"data"`
+		Code    int    `json:"code"`
 		Message string `json:"message"`
+		Data    struct {
+			Next     any  `json:"Next"`
+			Expired  bool `json:"Expired"`
+			InfoList []struct {
+				Size int64 `json:"Size"`
+			} `json:"InfoList"`
+		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
 		return resultFor(item, StateUncertain, "响应解析失败")
 	}
-	if response.Code == 0 {
-		return resultFor(item, StateOK, "链接有效")
+	if response.Code != 0 {
+		return stateFromMessage(item, response.Message)
 	}
-	if response.Data.HasPwd {
-		return resultFor(item, StateLocked, "需要提取码")
+	if response.Data.Expired {
+		return resultFor(item, StateBad, "链接失效")
 	}
-	return resultFor(item, StateBad, firstNonEmpty(response.Message, "链接失效"))
+	if len(response.Data.InfoList) > 0 && pan123LastPage(response.Data.Next) {
+		var sizeBytes int64
+		for _, entry := range response.Data.InfoList {
+			if entry.Size > 0 {
+				sizeBytes += entry.Size
+			}
+		}
+		return resultWithSize(item, StateOK, "链接有效", sizeBytes)
+	}
+	return resultFor(item, StateOK, "链接有效")
+}
+
+func pan123LastPage(next any) bool {
+	switch value := next.(type) {
+	case nil:
+		return true
+	case string:
+		value = strings.TrimSpace(value)
+		return value == "" || value == "-1" || value == "0"
+	case float64:
+		return value == -1 || value == 0
+	default:
+		return false
+	}
 }
 
 func (c *HTTPChecker) checkXunlei(ctx context.Context, item Item) Result {
@@ -579,10 +693,9 @@ var (
 	xunleiShareHost      = "https://api-pan.xunlei.com"
 	xunleiCaptchaInitURL = "https://xluser-ssl.xunlei.com/v1/shield/captcha/init"
 
-	// pan123ShareInfoAPI is the single canonical host for the share/info lookup;
-	// tests override it to point at a local httptest server. yun.123pan.com measured
-	// fastest (~185ms) of the live 123pan domains; www.123pan.com/.cn are dead SPAs.
-	pan123ShareInfoAPI = "https://yun.123pan.com/api/share/info"
+	// pan123ShareListAPI is a canonical host for both validity and root-list size
+	// lookup; tests override it to point at a local httptest server.
+	pan123ShareListAPI = "https://www.123684.com/b/api/share/get"
 )
 
 func (c *HTTPChecker) check115(ctx context.Context, item Item) Result {
@@ -608,6 +721,7 @@ func (c *HTTPChecker) check115(ctx context.Context, item Item) Result {
 			Count     int   `json:"count"`
 			ShareInfo struct {
 				SnapID       string `json:"snap_id"`
+				FileSize     int64  `json:"file_size"`
 				ShareTitle   string `json:"share_title"`
 				ForbidReason string `json:"forbid_reason"`
 			} `json:"shareinfo"`
@@ -615,7 +729,7 @@ func (c *HTTPChecker) check115(ctx context.Context, item Item) Result {
 	}
 	_ = json.Unmarshal(body, &response)
 	if response.State && response.Errno == 0 && (len(response.Data.List) > 0 || response.Data.Count > 0 || response.Data.ShareInfo.SnapID != "" || response.Data.ShareInfo.ShareTitle != "") {
-		return resultFor(item, StateOK, "链接有效")
+		return resultWithSize(item, StateOK, "链接有效", response.Data.ShareInfo.FileSize)
 	}
 	return stateFromMessage(item, firstNonEmpty(response.Error, response.Data.ShareInfo.ForbidReason, string(body)))
 }
@@ -688,6 +802,14 @@ func requestFailure(ctx context.Context, item Item) Result {
 
 func resultFor(item Item, state string, summary string) Result {
 	return Result{DiskType: item.DiskType, URL: item.URL, Password: item.Password, State: state, Summary: summary}
+}
+
+func resultWithSize(item Item, state string, summary string, sizeBytes int64) Result {
+	result := resultFor(item, state, summary)
+	if sizeBytes > 0 {
+		result.SizeBytes = sizeBytes
+	}
+	return result
 }
 
 func stateFromMessage(item Item, message string) Result {

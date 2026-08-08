@@ -67,7 +67,8 @@ const linkCheckFields: FieldRow[] = [
   { name: 'data.results', type: 'array', description: '按请求顺序返回的检测结果。' },
   { name: 'data.grouped', type: 'object', description: '按 disk_type 分组的检测结果，便于外部系统直接消费。' },
   { name: 'state', type: 'string', description: '检测状态：ok、bad、locked、unsupported、uncertain。' },
-  { name: 'summary', type: 'string', description: '面向调用方展示的简短状态说明。' }
+  { name: 'summary', type: 'string', description: '面向调用方展示的简短状态说明。' },
+  { name: 'size_bytes', type: 'number', description: '网盘接口报告的分享大小，单位字节；也可由一次根目录请求中的文件/文件夹大小累加。' }
 ]
 
 const linkCheckStates: FieldRow[] = [
@@ -189,7 +190,8 @@ const linkCheckResponseExample = `{
         "url": "https://pan.quark.cn/s/xxxx",
         "password": "abcd",
         "state": "ok",
-        "summary": "链接有效"
+        "summary": "链接有效",
+        "size_bytes": 42704901049
       }
     ],
     "grouped": {
@@ -199,7 +201,8 @@ const linkCheckResponseExample = `{
           "url": "https://pan.quark.cn/s/xxxx",
           "password": "abcd",
           "state": "ok",
-          "summary": "链接有效"
+          "summary": "链接有效",
+          "size_bytes": 42704901049
         }
       ]
     }
@@ -425,6 +428,8 @@ async function copyCode(key: string, value: string) {
         相同链接会在单次请求内去重；确定（<code>ok</code>/<code>bad</code>/<code>locked</code>）结果在进程内缓存
         （默认约 5 分钟，设为 <code>0</code> 关闭），<code>uncertain</code>/<code>unsupported</code> 不缓存。
         超时时间由请求体的 <code>timeout_ms</code>/<code>timeout</code> 指定（默认 5 秒），到期未完成的链接以 <code>uncertain</code> 返回。
+        有效结果在网盘接口能报告分享总大小，或一次根目录请求能取得文件/文件夹大小时，会额外返回 <code>size_bytes</code>（单位字节）。
+        多个根节点会直接累加，但不会进入子目录；目前支持夸克、115、UC、123、百度和天翼。
       </p>
 
       <div class="code-grid">

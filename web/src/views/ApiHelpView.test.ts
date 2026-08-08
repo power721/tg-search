@@ -61,6 +61,8 @@ describe('ApiHelpView', () => {
     expect(text).toContain('去重')
     expect(text).toContain('立即生效')
     expect(text).toContain('"state": "ok"')
+    expect(text).toContain('"size_bytes": 42704901049')
+    expect(text).toContain('不会进入子目录')
     expect(text).toContain('bad')
     expect(text).toContain('locked')
     expect(text).toContain('unsupported')

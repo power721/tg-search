@@ -35,11 +35,12 @@ type Request struct {
 }
 
 type Result struct {
-	DiskType string `json:"disk_type"`
-	URL      string `json:"url"`
-	Password string `json:"password,omitempty"`
-	State    string `json:"state"`
-	Summary  string `json:"summary,omitempty"`
+	DiskType  string `json:"disk_type"`
+	URL       string `json:"url"`
+	Password  string `json:"password,omitempty"`
+	State     string `json:"state"`
+	Summary   string `json:"summary,omitempty"`
+	SizeBytes int64  `json:"size_bytes,omitempty"`
 }
 
 type Response struct {
