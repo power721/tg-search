@@ -341,7 +341,7 @@ func (c *HTTPChecker) checkBaidu(ctx context.Context, item Item) Result {
 		return resultFor(item, StateBad, "链接失效")
 	case -9, -12:
 		return resultFor(item, StateLocked, "需要提取码")
-	case -7, 105, 115, 117, 145:
+	case -7, -21, 105, 115, 117, 145:
 		return resultFor(item, StateBad, "链接失效")
 	default:
 		return resultFor(item, StateUncertain, firstNonEmpty(list.Errmsg, "无法确认链接状态"))
