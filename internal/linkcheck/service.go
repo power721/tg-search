@@ -14,6 +14,7 @@ const (
 	StateLocked      = "locked"
 	StateUnsupported = "unsupported"
 	StateUncertain   = "uncertain"
+	StateRateLimited = "rate_limited" // 网盘风控/频控拦截,链接状态未知,不可当失效
 
 	DefaultTimeout     = 5 * time.Second
 	DefaultConcurrency = 128 // flat worker-pool size; HTTP/2 multiplexing keeps connection count low
@@ -205,7 +206,7 @@ func groupResults(results []Result) map[string][]Result {
 }
 
 // cacheable reports whether a result state is definitive enough to memoize.
-// Uncertain/unsupported results depend on transient conditions and are never cached.
+// Uncertain/rate-limited/unsupported results depend on transient conditions and are never cached.
 func cacheable(state string) bool {
 	switch state {
 	case StateOK, StateBad, StateLocked:

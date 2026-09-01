@@ -309,6 +309,9 @@ func (c *HTTPChecker) checkBaidu(ctx context.Context, item Item) Result {
 		if verify.Errno == -9 || verify.Errno == -12 {
 			return resultFor(item, StateLocked, "提取码错误或缺失")
 		}
+		if verify.Errno == -62 || verify.Errno == -65 {
+			return resultFor(item, StateRateLimited, "触发百度风控/频控,状态未知")
+		}
 		if verify.Errno != 0 {
 			return resultFor(item, StateUncertain, firstNonEmpty(verify.Errmsg, "无法确认链接状态"))
 		}
@@ -341,6 +344,8 @@ func (c *HTTPChecker) checkBaidu(ctx context.Context, item Item) Result {
 		return resultFor(item, StateBad, "链接失效")
 	case -9, -12:
 		return resultFor(item, StateLocked, "需要提取码")
+	case -62, -65:
+		return resultFor(item, StateRateLimited, "触发百度风控/频控,状态未知")
 	case -7, -21, 105, 115, 117, 145:
 		return resultFor(item, StateBad, "链接失效")
 	default:

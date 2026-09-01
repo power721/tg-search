@@ -66,7 +66,7 @@ const linkCheckFields: FieldRow[] = [
   { name: 'data.timeout_ms', type: 'number', description: '本次检测使用的总超时时间，单位毫秒。' },
   { name: 'data.results', type: 'array', description: '按请求顺序返回的检测结果。' },
   { name: 'data.grouped', type: 'object', description: '按 disk_type 分组的检测结果，便于外部系统直接消费。' },
-  { name: 'state', type: 'string', description: '检测状态：ok、bad、locked、unsupported、uncertain。' },
+  { name: 'state', type: 'string', description: '检测状态：ok、bad、locked、unsupported、uncertain、rate_limited。' },
   { name: 'summary', type: 'string', description: '面向调用方展示的简短状态说明。' },
   { name: 'size_bytes', type: 'number', description: '网盘接口报告的分享大小，单位字节；也可由一次根目录请求中的文件/文件夹大小累加。' }
 ]
@@ -76,7 +76,8 @@ const linkCheckStates: FieldRow[] = [
   { name: 'bad', type: '失效', description: '链接失效、过期、删除或被取消。' },
   { name: 'locked', type: '受限', description: '需要提取码，或提取码错误/缺失。' },
   { name: 'unsupported', type: '不支持', description: '当前网盘类型暂不支持检测。' },
-  { name: 'uncertain', type: '不确定', description: '请求失败、超时或无法确认状态。' }
+  { name: 'uncertain', type: '不确定', description: '请求失败、超时或无法确认状态。' },
+  { name: 'rate_limited', type: '限流', description: '被网盘风控/频控拦截，链接状态未知，不可视为失效。' }
 ]
 
 const getSearchExample = `curl -G 'http://localhost:9900/api/search' \\
