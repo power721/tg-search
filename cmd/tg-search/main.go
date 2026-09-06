@@ -101,7 +101,7 @@ func run(configPath string) error {
 	accounts := repository.NewAccountRepository(conn)
 	channels := repository.NewChannelRepository(conn)
 	messages := repository.NewMessageRepository(conn)
-	links := repository.NewLinkRepository(conn)
+	links := repository.NewLinkRepository(conn).WithReadDB(readConn)
 	files := repository.NewFileRepository(conn).WithReadDB(readConn)
 	resourceStats := repository.NewResourceStatsRepository(conn)
 	resourceIndex := repository.NewResourceIndexRepository(conn).WithReadDB(readConn)
@@ -113,9 +113,9 @@ func run(configPath string) error {
 	deliveries := repository.NewNotificationDeliveryRepository(conn)
 	botSubscriptions := repository.NewTelegramBotSubscriptionRepository(conn)
 	maintenance := repository.NewMaintenanceRepository(conn)
-	status := repository.NewStatusRepository(conn)
+	status := repository.NewStatusRepository(conn).WithReadDB(readConn)
 	users := repository.NewUserRepository(conn)
-	adminSessions := repository.NewAdminSessionRepository(conn)
+	adminSessions := repository.NewAdminSessionRepository(conn).WithReadDB(readConn)
 	apiKeys := repository.NewAPIKeyRepository(conn)
 	settings := repository.NewSettingsRepository(conn)
 	runtimeSettings, err := settings.LoadRuntimeSettings(ctx, cfg)
@@ -135,7 +135,7 @@ func run(configPath string) error {
 	}
 	cfg.Bot = botSettings
 	watchFilter := messagefilter.New(messagefilter.NewSettingsRuleStore(watchRules, settings))
-	taskRepository := taskpkg.NewRepository(conn)
+	taskRepository := taskpkg.NewRepository(conn).WithReadDB(readConn)
 	taskService := taskpkg.NewService(taskRepository)
 	gapRecoveryCooldown := taskpkg.NewGapRecoveryCooldown(0)
 	eventBroker := taskpkg.NewEventBroker()
@@ -256,6 +256,13 @@ func run(configPath string) error {
 	logs.App.Info("task worker started")
 	resourceService.Start(ctx)
 	logs.App.Info("resource stats refresher started")
+	// Warm the dashboard link-type snapshot so the first visitor after a
+	// restart does not pay the full-table compute inline.
+	go func() {
+		if _, err := links.CountByType(ctx); err != nil {
+			logs.App.Warn("warm link type stats failed", zap.Error(err))
+		}
+	}()
 	accountManager := account.NewManager(account.ManagerOptions{
 		Accounts: accounts,
 		Updates:  updateService,

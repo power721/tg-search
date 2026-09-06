@@ -9,11 +9,29 @@ import (
 )
 
 type StatusRepository struct {
-	db *sql.DB
+	db     *sql.DB
+	readDB *sql.DB
 }
 
 func NewStatusRepository(db *sql.DB) *StatusRepository {
-	return &StatusRepository{db: db}
+	return &StatusRepository{db: db, readDB: db}
+}
+
+// WithReadDB routes the dashboard COUNT queries to a separate connection pool
+// so /api/status does not queue behind sync/index writes on the single writer
+// connection. Falls back to the writer pool when nil.
+func (r *StatusRepository) WithReadDB(readDB *sql.DB) *StatusRepository {
+	if readDB != nil {
+		r.readDB = readDB
+	}
+	return r
+}
+
+func (r *StatusRepository) readConn() *sql.DB {
+	if r.readDB != nil {
+		return r.readDB
+	}
+	return r.db
 }
 
 func (r *StatusRepository) Counts(ctx context.Context) (model.StatusCounts, error) {
@@ -28,12 +46,12 @@ func (r *StatusRepository) Counts(ctx context.Context) (model.StatusCounts, erro
 		{`SELECT count(*) FROM telegram_links`, &counts.Links},
 	}
 	for _, query := range queries {
-		if err := r.db.QueryRowContext(ctx, query.sql).Scan(query.dest); err != nil {
+		if err := r.readConn().QueryRowContext(ctx, query.sql).Scan(query.dest); err != nil {
 			return model.StatusCounts{}, fmt.Errorf("read status count: %w", err)
 		}
 	}
 	counts.AccountStates = map[string]int64{}
-	rows, err := r.db.QueryContext(ctx, `SELECT status, count(*) FROM telegram_accounts GROUP BY status`)
+	rows, err := r.readConn().QueryContext(ctx, `SELECT status, count(*) FROM telegram_accounts GROUP BY status`)
 	if err != nil {
 		return model.StatusCounts{}, fmt.Errorf("read account state counts: %w", err)
 	}

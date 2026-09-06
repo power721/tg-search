@@ -11,11 +11,30 @@ import (
 )
 
 type AdminSessionRepository struct {
-	db *sql.DB
+	db     *sql.DB
+	readDB *sql.DB
 }
 
 func NewAdminSessionRepository(db *sql.DB) *AdminSessionRepository {
-	return &AdminSessionRepository{db: db}
+	return &AdminSessionRepository{db: db, readDB: db}
+}
+
+// WithReadDB routes session validation lookups to a separate connection pool
+// so every authenticated admin request does not queue behind writes on the
+// single writer connection. Mutations stay on the writer pool. Falls back to
+// the writer pool when nil.
+func (r *AdminSessionRepository) WithReadDB(readDB *sql.DB) *AdminSessionRepository {
+	if readDB != nil {
+		r.readDB = readDB
+	}
+	return r
+}
+
+func (r *AdminSessionRepository) readConn() *sql.DB {
+	if r.readDB != nil {
+		return r.readDB
+	}
+	return r.db
 }
 
 func (r *AdminSessionRepository) Create(ctx context.Context, session model.AdminSession) error {
@@ -35,7 +54,7 @@ VALUES
 }
 
 func (r *AdminSessionRepository) FindUser(ctx context.Context, token string, now time.Time) (model.User, error) {
-	user, err := scanUser(r.db.QueryRowContext(ctx, `
+	user, err := scanUser(r.readConn().QueryRowContext(ctx, `
 SELECT u.id, u.username, u.password_hash, u.role, u.last_login_at, u.created_at, u.updated_at
 FROM admin_sessions s
 JOIN users u ON u.id = s.user_id

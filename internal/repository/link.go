@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"tg-search/internal/model"
@@ -13,7 +15,18 @@ import (
 )
 
 type LinkRepository struct {
-	db *sql.DB
+	db     *sql.DB
+	readDB *sql.DB
+
+	// In-memory snapshot for CountByType (dashboard "links grouped"). The
+	// query joins every link with its message row, which costs ~1s idle and
+	// multiples of that while sync writes saturate I/O, so the dashboard is
+	// served from the snapshot and a coalesced background refresh recomputes
+	// it at most once per TTL.
+	typeStatsMu         sync.Mutex
+	typeStatsCache      map[string]int
+	typeStatsAt         time.Time
+	typeStatsRefreshing atomic.Bool
 }
 
 type LinkResourceStats struct {
@@ -38,7 +51,24 @@ const linkResourceCategoryExpr = `CASE
          END`
 
 func NewLinkRepository(db *sql.DB) *LinkRepository {
-	return &LinkRepository{db: db}
+	return &LinkRepository{db: db, readDB: db}
+}
+
+// WithReadDB routes read-only aggregate queries (dashboard/grouped stats) to a
+// separate connection pool so they do not queue behind sync writes on the
+// single writer connection. Falls back to the writer pool when nil.
+func (r *LinkRepository) WithReadDB(readDB *sql.DB) *LinkRepository {
+	if readDB != nil {
+		r.readDB = readDB
+	}
+	return r
+}
+
+func (r *LinkRepository) readConn() *sql.DB {
+	if r.readDB != nil {
+		return r.readDB
+	}
+	return r.db
 }
 
 func (r *LinkRepository) SaveBatch(ctx context.Context, messageID int64, links []model.Link) ([]model.Link, error) {
@@ -353,7 +383,7 @@ JOIN telegram_messages m ON m.id = l.message_id
 JOIN telegram_message_contents mc ON mc.message_id = m.id
 WHERE ` + strings.Join(where, " AND ")
 	var total int
-	if err := r.db.QueryRowContext(ctx, query, args...).Scan(&total); err != nil {
+	if err := r.readConn().QueryRowContext(ctx, query, args...).Scan(&total); err != nil {
 		return 0, fmt.Errorf("count search links: %w", err)
 	}
 	return total, nil
@@ -375,7 +405,7 @@ FROM (
 )
 WHERE rn = 1
 GROUP BY category`
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	rows, err := r.readConn().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("count resource links by category: %w", err)
 	}
@@ -393,8 +423,50 @@ GROUP BY category`
 	return grouped, rows.Err()
 }
 
+// linkTypeStatsTTL bounds how old the in-memory per-type link snapshot may
+// get. The compute joins every link row with its message; stale snapshots are
+// served immediately and refreshed by one coalesced background goroutine.
+const linkTypeStatsTTL = time.Minute
+
 func (r *LinkRepository) CountByType(ctx context.Context) (map[string]int, error) {
-	rows, err := r.db.QueryContext(ctx, `
+	r.typeStatsMu.Lock()
+	cached := r.typeStatsCache
+	fresh := cached != nil && time.Since(r.typeStatsAt) < linkTypeStatsTTL
+	r.typeStatsMu.Unlock()
+
+	if cached != nil && !fresh {
+		r.maybeRefreshTypeStatsAsync()
+	}
+	if cached != nil {
+		return copyIntMap(cached), nil
+	}
+
+	// Cold cache: wait for an in-flight background compute instead of starting
+	// a duplicate full-table scan; fall back to computing inline otherwise.
+	for r.typeStatsRefreshing.Load() {
+		r.typeStatsMu.Lock()
+		cached := r.typeStatsCache
+		r.typeStatsMu.Unlock()
+		if cached != nil {
+			return copyIntMap(cached), nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+
+	grouped, err := r.computeCountByType(ctx)
+	if err != nil {
+		return nil, err
+	}
+	r.storeTypeStats(grouped)
+	return copyIntMap(grouped), nil
+}
+
+func (r *LinkRepository) computeCountByType(ctx context.Context) (map[string]int, error) {
+	rows, err := r.readConn().QueryContext(ctx, `
 SELECT COALESCE(NULLIF(type, ''), 'url') AS type, count(*)
 FROM telegram_links
 JOIN telegram_messages m ON m.id = telegram_links.message_id
@@ -415,6 +487,37 @@ GROUP BY COALESCE(NULLIF(type, ''), 'url')`)
 		grouped[typ] = count
 	}
 	return grouped, rows.Err()
+}
+
+func copyIntMap(src map[string]int) map[string]int {
+	out := make(map[string]int, len(src))
+	for key, value := range src {
+		out[key] = value
+	}
+	return out
+}
+
+func (r *LinkRepository) storeTypeStats(grouped map[string]int) {
+	r.typeStatsMu.Lock()
+	r.typeStatsCache = grouped
+	r.typeStatsAt = time.Now()
+	r.typeStatsMu.Unlock()
+}
+
+func (r *LinkRepository) maybeRefreshTypeStatsAsync() {
+	if !r.typeStatsRefreshing.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer r.typeStatsRefreshing.Store(false)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		grouped, err := r.computeCountByType(ctx)
+		if err != nil {
+			return
+		}
+		r.storeTypeStats(grouped)
+	}()
 }
 
 func (r *LinkRepository) ResourceStatsByURL(ctx context.Context, urls []string) (map[string]LinkResourceStats, error) {

@@ -616,3 +616,56 @@ func TestResourceServiceUsesIndexWhenAvailable(t *testing.T) {
 		t.Fatalf("result = %+v, want indexed resource", result)
 	}
 }
+
+// The per-category dashboard stats require a full multi-second table scan on
+// large libraries, so within the TTL window they must be served from the
+// in-memory snapshot instead of recomputing.
+func TestResourceTypeStatsServesCachedSnapshotWithinTTL(t *testing.T) {
+	s := NewService(nil, nil)
+	s.statsTypeCache = map[string]int{"cloud_drive": 7, "_total": 7}
+	s.statsTypeCacheAt = time.Now()
+
+	got, err := s.ResourceTypeStats(context.Background())
+	if err != nil {
+		t.Fatalf("ResourceTypeStats: %v", err)
+	}
+	if got["cloud_drive"] != 7 || got["_total"] != 7 {
+		t.Fatalf("ResourceTypeStats = %+v, want cached snapshot (links/files are nil so live compute cannot produce these)", got)
+	}
+
+	// The result must be a copy: mutating it must not poison the cache.
+	got["cloud_drive"] = 999
+	if s.statsTypeCache["cloud_drive"] != 7 {
+		t.Fatalf("cache was mutated through the returned map: %+v", s.statsTypeCache)
+	}
+}
+
+// Once the snapshot is older than the TTL it must still be served immediately
+// (a fresh compute is a multi-second table scan); the recompute happens in the
+// background and replaces the cache.
+func TestResourceTypeStatsServesStaleSnapshotAndRefreshesInBackground(t *testing.T) {
+	s := NewService(nil, nil)
+	s.statsTypeCache = map[string]int{"cloud_drive": 7, "_total": 7}
+	s.statsTypeCacheAt = time.Now().Add(-2 * resourceTypeStatsTTL)
+
+	got, err := s.ResourceTypeStats(context.Background())
+	if err != nil {
+		t.Fatalf("ResourceTypeStats: %v", err)
+	}
+	if got["cloud_drive"] != 7 {
+		t.Fatalf("ResourceTypeStats = %+v, want the stale snapshot served immediately", got)
+	}
+
+	// The background refresh (nil links/files → computed defaults) replaces it.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		s.statsTypeCacheMu.Lock()
+		cached := s.statsTypeCache["cloud_drive"]
+		s.statsTypeCacheMu.Unlock()
+		if cached != 7 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("background refresh did not replace the stale cache")
+}

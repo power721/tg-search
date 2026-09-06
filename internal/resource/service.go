@@ -161,6 +161,15 @@ type Service struct {
 	statsRefreshInterval time.Duration
 	statsDirty           atomic.Bool
 
+	// Per-request in-memory cache for ResourceTypeStats. The underlying
+	// per-category query scans every link/message row (seconds on large
+	// libraries), so the dashboard must not trigger it more often than the
+	// TTL; the background refresh loop only maintains the cached _total.
+	statsTypeCacheMu    sync.Mutex
+	statsTypeCache      map[string]int
+	statsTypeCacheAt    time.Time
+	statsTypeRefreshing atomic.Bool
+
 	statsMu     sync.Mutex
 	statsCancel context.CancelFunc
 	statsWG     sync.WaitGroup
@@ -217,6 +226,13 @@ func (s *Service) Start(ctx context.Context) {
 	s.statsCancel = cancel
 	s.statsWG.Add(1)
 	go s.statsRefreshLoop(runCtx, interval)
+	// Warm the dashboard per-category snapshot in the background so the first
+	// visitor after a restart does not pay the full-table compute inline.
+	s.statsWG.Add(1)
+	go func() {
+		defer s.statsWG.Done()
+		s.maybeRefreshStatsTypeAsync()
+	}()
 }
 
 // Stop signals the background stats refresher to exit and waits up to ctx.
@@ -962,7 +978,87 @@ func (s *Service) computeGlobalGrouped(ctx context.Context) (map[string]int, err
 	return grouped, nil
 }
 
+// resourceTypeStatsTTL bounds how old the in-memory per-category dashboard
+// snapshot may get. A fresh compute is a full multi-second table scan (tens of
+// seconds while sync writes saturate I/O), so expired snapshots are never
+// recomputed on the request path: requests get the stale snapshot immediately
+// and a single background refresh is kicked off instead.
+const resourceTypeStatsTTL = time.Minute
+
+func copyGrouped(grouped map[string]int) map[string]int {
+	out := make(map[string]int, len(grouped))
+	for category, count := range grouped {
+		out[category] = count
+	}
+	return out
+}
+
 func (s *Service) ResourceTypeStats(ctx context.Context) (map[string]int, error) {
+	s.statsTypeCacheMu.Lock()
+	cached := s.statsTypeCache
+	fresh := cached != nil && time.Since(s.statsTypeCacheAt) < resourceTypeStatsTTL
+	s.statsTypeCacheMu.Unlock()
+
+	if cached != nil && !fresh {
+		// Stale-while-revalidate: serve the snapshot now; the background
+		// refresh is coalesced so a burst of requests triggers one compute.
+		s.maybeRefreshStatsTypeAsync()
+	}
+	if cached != nil {
+		return copyGrouped(cached), nil
+	}
+
+	// Cold cache (first requests after boot). If the startup warmup or a
+	// background refresh is already computing, wait for its snapshot instead
+	// of starting a duplicate full-table scan; fall back to computing inline
+	// when nothing is in flight.
+	for s.statsTypeRefreshing.Load() {
+		s.statsTypeCacheMu.Lock()
+		cached := s.statsTypeCache
+		s.statsTypeCacheMu.Unlock()
+		if cached != nil {
+			return copyGrouped(cached), nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+
+	grouped, err := s.computeResourceTypeStats(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.storeStatsTypeCache(grouped)
+	return copyGrouped(grouped), nil
+}
+
+func (s *Service) storeStatsTypeCache(grouped map[string]int) {
+	s.statsTypeCacheMu.Lock()
+	s.statsTypeCache = grouped
+	s.statsTypeCacheAt = time.Now()
+	s.statsTypeCacheMu.Unlock()
+}
+
+func (s *Service) maybeRefreshStatsTypeAsync() {
+	if !s.statsTypeRefreshing.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer s.statsTypeRefreshing.Store(false)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		grouped, err := s.computeResourceTypeStats(ctx)
+		if err != nil {
+			s.logger.Warn("background resource type stats refresh failed", zap.Error(err))
+			return
+		}
+		s.storeStatsTypeCache(grouped)
+	}()
+}
+
+func (s *Service) computeResourceTypeStats(ctx context.Context) (map[string]int, error) {
 	grouped := defaultGrouped()
 	var total int
 

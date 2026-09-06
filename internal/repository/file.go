@@ -324,7 +324,7 @@ JOIN telegram_messages m ON m.id = f.message_id
 JOIN telegram_message_contents mc ON mc.message_id = m.id
 WHERE ` + strings.Join(where, " AND ")
 	var total int
-	if err := r.db.QueryRowContext(ctx, query, args...).Scan(&total); err != nil {
+	if err := r.readConn().QueryRowContext(ctx, query, args...).Scan(&total); err != nil {
 		return 0, fmt.Errorf("count resource files: %w", err)
 	}
 	return total, nil

@@ -11,7 +11,30 @@ import (
 )
 
 type Repository struct {
-	db *sql.DB
+	db     *sql.DB
+	readDB *sql.DB
+}
+
+func NewRepository(db *sql.DB) *Repository {
+	return &Repository{db: db, readDB: db}
+}
+
+// WithReadDB routes read-only task listing/counting to a separate connection
+// pool so dashboard reads do not queue behind task writes on the single writer
+// connection. Mutations stay on the writer pool. Falls back to the writer pool
+// when nil.
+func (r *Repository) WithReadDB(readDB *sql.DB) *Repository {
+	if readDB != nil {
+		r.readDB = readDB
+	}
+	return r
+}
+
+func (r *Repository) readConn() *sql.DB {
+	if r.readDB != nil {
+		return r.readDB
+	}
+	return r.db
 }
 
 type StatusUpdate struct {
@@ -32,10 +55,6 @@ type ListFilter struct {
 	Order  string
 	Limit  int
 	Offset int
-}
-
-func NewRepository(db *sql.DB) *Repository {
-	return &Repository{db: db}
 }
 
 func (r *Repository) Create(ctx context.Context, item model.Task) (model.Task, error) {
@@ -123,7 +142,7 @@ func (r *Repository) List(ctx context.Context, filter ListFilter) ([]model.Task,
 	}
 	where, args := taskListWhere(filter)
 	args = append(args, limit, filter.Offset)
-	rows, err := r.db.QueryContext(ctx, `
+	rows, err := r.readConn().QueryContext(ctx, `
 SELECT id, type, status, progress, total, message, error_code, error_message, retry_count, next_run_at, payload_json, started_at, finished_at, created_at, updated_at
 FROM sync_tasks
 WHERE `+strings.Join(where, " AND ")+`
@@ -139,7 +158,7 @@ LIMIT ? OFFSET ?`, args...)
 func (r *Repository) Count(ctx context.Context, filter ListFilter) (int, error) {
 	where, args := taskListWhere(filter)
 	var total int
-	if err := r.db.QueryRowContext(ctx, `
+	if err := r.readConn().QueryRowContext(ctx, `
 SELECT COUNT(*)
 FROM sync_tasks
 WHERE `+strings.Join(where, " AND "), args...).Scan(&total); err != nil {

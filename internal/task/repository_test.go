@@ -309,3 +309,25 @@ func testDB(t *testing.T) *sql.DB {
 	}
 	return conn
 }
+
+// Task listing/counting runs on every dashboard load, so it must go through
+// the read pool when one is attached instead of queueing behind task writes
+// on the single writer connection.
+func TestTaskRepositoryListAndCountUseReadPool(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(filepath.Join(t.TempDir(), "writer.db"))
+	require.NoError(t, err)
+	defer conn.Close()
+
+	// Reader pool on a file with no schema: any query that reaches it must
+	// fail with "no such table", proving it did not run on the writer.
+	reader, err := db.OpenRead(filepath.Join(t.TempDir(), "reader.db"))
+	require.NoError(t, err)
+	defer reader.Close()
+
+	repo := NewRepository(conn).WithReadDB(reader)
+	_, err = repo.List(ctx, ListFilter{})
+	require.ErrorContains(t, err, "no such table")
+	_, err = repo.Count(ctx, ListFilter{})
+	require.ErrorContains(t, err, "no such table")
+}
